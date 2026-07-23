@@ -5,3 +5,4 @@ python-dotenv>=1.0.0
 langgraph>=0.1.0
 groq
 requests
+PyGithub>=1.59.0
