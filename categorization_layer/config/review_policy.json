@@ -1,0 +1,11 @@
+{
+    "min_confidence":0.70,
+
+    "review_on_ai_disagreement":true,
+
+    "review_on_duplicate":true,
+
+    "review_on_critical":false,
+
+    "review_on_unknown_technology":true
+}

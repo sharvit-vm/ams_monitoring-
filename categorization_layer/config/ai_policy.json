@@ -1,0 +1,23 @@
+{
+    "enable_ai_validation": true,
+
+    "confidence_threshold": 0.70,
+
+    "auto_route_threshold": 0.90,
+
+    "human_review_threshold": 0.60,
+
+    "model": "llama-3.3-70b-versatile",
+
+    "temperature": 0,
+
+    "max_tokens": 400,
+
+    "merge_threshold": 0.90,
+
+    "enable_ai_classification": false,
+
+    "enable_ai_reasoning": false,
+
+    "enable_ai_routing": false
+}

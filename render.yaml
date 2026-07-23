@@ -1,112 +1,10 @@
-services:
+﻿services:
   - type: web
-    name: codefix-multiagent-workflow
+    name: ams-monitoring-intake-categorisation
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
-    autoDeploy: true
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.11"
-      - key: NEO4J_URI
-        sync: false
-      - key: NEO4J_USERNAME
-        value: neo4j
-      - key: NEO4J_PASSWORD
-        sync: false
-      - key: PINECONE_API_KEY
-        sync: false
-      - key: PINECONE_INDEX_NAME
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: GITHUB_TOKEN
-        sync: false
-      - key: GITHUB_WEBHOOK_SECRET
-        sync: false
-      - key: JIRA_WEBHOOK_TOKEN
-        sync: false
-      - key: JIRA_DEFAULT_REPO_URL
-        sync: false
-      - key: JIRA_DEFAULT_REPO_FULL_NAME
-        sync: false
-      - key: JIRA_DEFAULT_BRANCH
-        value: main
-      - key: SERVICENOW_WEBHOOK_TOKEN
-        sync: false
-      - key: SERVICENOW_DEFAULT_REPO_URL
-        sync: false
-      - key: SERVICENOW_DEFAULT_REPO_FULL_NAME
-        sync: false
-      - key: SERVICENOW_DEFAULT_BRANCH
-        value: main
-      - key: RCA_REPORT_DIR
-        value: data/rca_reports
-      - key: RCA_REPORT_INCLUDE_RAW_PAYLOAD
-        value: "false"
-      - key: REPORTS_READ_TOKEN
-        sync: false
-      - key: CATEGORISATION_AGENT_URL
-        value: https://categorization-agent-1gvg.onrender.com/categorize
-      - key: CATEGORISATION_AGENT_TOKEN
-        sync: false
-      - key: CATEGORISATION_AGENT_TIMEOUT_SECONDS
-        value: "20"
-      - key: CATEGORISATION_INCLUDE_RAW_PAYLOAD
-        value: "false"
-      - key: L2_RCA_AGENT_URL
-        sync: false
-      - key: L2_RCA_AGENT_TOKEN
-        sync: false
-      - key: L2_RCA_AGENT_TIMEOUT_SECONDS
-        value: "120"
-      - key: L2_DEFAULT_APPLICATION
-        sync: false
-      - key: L2_DEFAULT_TECHNOLOGY
-        sync: false
-      - key: LANGFUSE_ENABLED
-        value: "false"
-      - key: LANGFUSE_PUBLIC_KEY
-        sync: false
-      - key: LANGFUSE_SECRET_KEY
-        sync: false
-      - key: LANGFUSE_HOST
-        value: https://cloud.langfuse.com
-      - key: LANGFUSE_BASE_URL
-        value: https://cloud.langfuse.com
-      - key: LANGFUSE_FLUSH_ON_SPAN
-        value: "true"
-      - key: L3_RCA_CONTEXT_WINDOW_LINES
-        value: "80"
-      - key: L3_RCA_MAX_CONNECTED_FILES
-        value: "5"
-      - key: L3_RCA_CONTEXT_MAX_CHARS
-        value: "12000"
-      - key: EMBEDDING_MODEL
-        value: text-embedding-3-small
-      - key: EMBEDDING_DIMENSIONS
-        value: "1536"
-      - key: MAX_CHUNK_TOKENS
-        value: "800"
-      - key: MAX_HIERARCHY_LEVELS
-        value: "8"
-      - key: CACHE_DIR
-        value: cache
-      - key: CLONE_ROOT
-        value: clone
-      - key: AUTO_INGEST_ON_WEBHOOK
-        value: "true"
-      - key: AUTO_VECTOR_INGEST_ON_WEBHOOK
-        value: "false"
-  - type: web
-    name: vm-categorization-agent
-    runtime: python
-    rootDir: vm-categorization-agent
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
     envVars:
@@ -120,3 +18,23 @@ services:
         value: "30"
       - key: AUTO_ROUTE_L2_WITHOUT_HUMAN_REVIEW
         value: "true"
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: JIRA_WEBHOOK_TOKEN
+        sync: false
+      - key: SERVICENOW_WEBHOOK_TOKEN
+        sync: false
+      - key: JIRA_DEFAULT_REPO_URL
+        sync: false
+      - key: JIRA_DEFAULT_REPO_FULL_NAME
+        sync: false
+      - key: JIRA_DEFAULT_BRANCH
+        value: main
+      - key: SERVICENOW_DEFAULT_REPO_URL
+        sync: false
+      - key: SERVICENOW_DEFAULT_REPO_FULL_NAME
+        sync: false
+      - key: SERVICENOW_DEFAULT_BRANCH
+        value: main
+      - key: CATEGORISATION_INCLUDE_RAW_PAYLOAD
+        value: "false"

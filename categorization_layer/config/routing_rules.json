@@ -1,0 +1,46 @@
+{
+    "L1": {
+        "default": "l1_rca"
+    },
+
+    "L2": {
+
+        "Infrastructure": "l2_rca",
+
+        "Database": "l2_rca",
+
+        "Guidewire": "l2_rca",
+
+        "Cloud": "l2_rca",
+
+        "Platform": "l2_rca",
+
+        "Application": "l2_rca",
+
+        "ServiceNow": "l2_rca",
+
+        "General": "l2_rca"
+    },
+
+    "L3": {
+
+        "Application": "l3_rca",
+
+        "Guidewire": "l3_rca",
+
+        "Database": "l3_rca",
+
+        "Infrastructure": "l3_rca",
+
+        "Cloud": "l3_rca",
+
+        "Platform": "l3_rca",
+
+        "General": "l3_rca"
+    },
+
+    "REJECT": {
+
+        "default": "reject_agent"
+    }
+}

@@ -1,0 +1,76 @@
+{
+    "L1": [
+
+        "password",
+
+        "login",
+
+        "browser",
+
+        "cache",
+
+        "vpn",
+
+        "access denied",
+
+        "authentication",
+
+        "single user",
+
+        "outlook"
+    ],
+
+    "L2": [
+
+        "cpu",
+
+        "memory",
+
+        "server",
+
+        "disk",
+
+        "database",
+
+        "latency",
+
+        "timeout",
+
+        "api",
+
+        "service unavailable",
+
+        "performance",
+
+        "kubernetes",
+
+        "pod",
+
+        "job failed"
+    ],
+
+    "L3": [
+
+        "exception",
+
+        "stacktrace",
+
+        "traceback",
+
+        "nullpointer",
+
+        "syntax error",
+
+        "deployment bug",
+
+        "regression",
+
+        "code defect",
+
+        "compile",
+
+        "java",
+
+        "python"
+    ]
+}

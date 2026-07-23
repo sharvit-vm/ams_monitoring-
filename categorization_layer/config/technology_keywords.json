@@ -1,0 +1,68 @@
+{
+    "Infrastructure":[
+
+        "cpu",
+
+        "memory",
+
+        "server",
+
+        "disk"
+    ],
+
+    "Database":[
+
+        "oracle",
+
+        "mysql",
+
+        "postgres",
+
+        "sql server"
+    ],
+
+    "Guidewire":[
+
+        "policycenter",
+
+        "claimcenter",
+
+        "billingcenter"
+    ],
+
+    "Cloud":[
+
+        "aws",
+
+        "azure",
+
+        "gcp"
+    ],
+
+    "Platform":[
+
+        "docker",
+
+        "kubernetes",
+
+        "openshift"
+    ],
+
+    "Application":[
+
+        "java",
+
+        "python",
+
+        "spring",
+
+        "tomcat",
+
+        "api"
+    ],
+
+    "ServiceNow":[
+
+        "servicenow"
+    ]
+}
