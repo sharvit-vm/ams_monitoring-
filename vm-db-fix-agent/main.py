@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from api.routes import router
+from api.routes import router, health_router
 from telemetry.middleware import RequestIDMiddleware
 
 
@@ -10,9 +10,11 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestIDMiddleware)
+app.include_router(health_router)
 app.include_router(router)
 
 
 @app.get("/")
+@app.head("/")
 def root():
     return {"status": "ok", "message": "DB Fix Agent is running", "docs": "/docs"}

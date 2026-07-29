@@ -13,7 +13,14 @@ router = APIRouter(
     tags=["DB Fix Agent"]
 )
 
+health_router = APIRouter(tags=["Health"])
 agent = DBFixAgent()
+
+
+@health_router.get("/health")
+@health_router.head("/health")
+def health():
+    return {"status": "ok", "service": "DB Fix Agent"}
 
 
 @router.post("/execute")
