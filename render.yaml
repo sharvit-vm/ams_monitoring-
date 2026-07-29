@@ -1,4 +1,52 @@
-﻿services:
+services:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SERVICE 1 — DB Fix Agent  (deploy first — no dependencies)
+  # ══════════════════════════════════════════════════════════════════════════
+  - type: web
+    name: vm-db-fix-agent
+    runtime: python
+    plan: free
+    rootDir: vm-db-fix-agent
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: SN_INSTANCE
+        sync: false
+      - key: SN_USERNAME
+        sync: false
+      - key: SN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SERVICE 2 — L2 RCA Agent  (depends on DB Fix Agent URL)
+  # ══════════════════════════════════════════════════════════════════════════
+  - type: web
+    name: vm-l2-rca-agent
+    runtime: python
+    plan: free
+    rootDir: vm-l2-rca-agent
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DB_FIX_AGENT_URL
+        sync: false
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SERVICE 3 — AMS Monitoring Intake + Categorisation  (depends on L2 RCA URL)
+  # ══════════════════════════════════════════════════════════════════════════
   - type: web
     name: ams-monitoring-intake-categorisation
     runtime: python
@@ -42,3 +90,17 @@
         value: main
       - key: CATEGORISATION_INCLUDE_RAW_PAYLOAD
         value: "false"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SERVICE 4 — Frontend React Dashboard  (depends on AMS Monitoring URL)
+  # ══════════════════════════════════════════════════════════════════════════
+  - type: web
+    name: ams-ai-ops-dashboard
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: VITE_GATEWAY_URL
+        sync: false
