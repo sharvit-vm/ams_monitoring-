@@ -19,9 +19,16 @@ app.include_router(
 
 
 @app.get("/")
-def health():
+@app.head("/")
+def root():
     return {
         "application": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "status": "Running"
     }
+
+
+@app.get("/health")
+@app.head("/health")
+def health():
+    return {"status": "ok", "service": settings.APP_NAME}
