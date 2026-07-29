@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: vm-l2-rca-agent
+    runtime: python
+    pythonVersion: "3.11"
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_NAME
+        value: L2 RCA Agent
+      - key: APP_VERSION
+        value: 1.0.0
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DB_FIX_AGENT_URL
+        sync: false

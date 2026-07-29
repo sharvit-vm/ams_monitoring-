@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: vm-db-fix-agent
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SN_INSTANCE
+        sync: false
+      - key: SN_USERNAME
+        sync: false
+      - key: SN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
