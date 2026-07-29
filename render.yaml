@@ -8,6 +8,7 @@ services:
     runtime: python
     plan: free
     rootDir: vm-db-fix-agent
+    branch: enterprise-agentic-workflow
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -32,6 +33,7 @@ services:
     runtime: python
     plan: free
     rootDir: vm-l2-rca-agent
+    branch: enterprise-agentic-workflow
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -51,6 +53,7 @@ services:
     name: ams-monitoring-intake-categorisation
     runtime: python
     plan: free
+    branch: enterprise-agentic-workflow
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -98,6 +101,7 @@ services:
     name: ams-ai-ops-dashboard
     runtime: static
     rootDir: frontend
+    branch: enterprise-agentic-workflow
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     pullRequestPreviewsEnabled: false
