@@ -1,4 +1,13 @@
+<<<<<<< Updated upstream
 ﻿services:
+=======
+services:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SERVICE 1 — AMS Monitoring Intake + Categorisation
+  # Embeds l2_rca and db_fix agents as in-process packages
+  # ══════════════════════════════════════════════════════════════════════════
+>>>>>>> Stashed changes
   - type: web
     name: ams-monitoring-intake-categorisation
     runtime: python
@@ -18,6 +27,17 @@
         value: "30"
       - key: AUTO_ROUTE_L2_WITHOUT_HUMAN_REVIEW
         value: "true"
+<<<<<<< Updated upstream
+=======
+      - key: SN_INSTANCE
+        sync: false
+      - key: SN_USERNAME
+        sync: false
+      - key: SN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+>>>>>>> Stashed changes
       - key: GITHUB_WEBHOOK_SECRET
         sync: false
       - key: JIRA_WEBHOOK_TOKEN
@@ -38,3 +58,21 @@
         value: main
       - key: CATEGORISATION_INCLUDE_RAW_PAYLOAD
         value: "false"
+<<<<<<< Updated upstream
+=======
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SERVICE 2 — Frontend React Dashboard
+  # ══════════════════════════════════════════════════════════════════════════
+  - type: web
+    name: ams-ai-ops-dashboard
+    runtime: static
+    rootDir: frontend
+    branch: enterprise-agentic-workflow
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: VITE_GATEWAY_URL
+        sync: false
+>>>>>>> Stashed changes

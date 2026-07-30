@@ -1,11 +1,15 @@
 ﻿# AMS Monitoring Intake + Categorisation Service
 
-Single deployable FastAPI service for the first AMS diagnosis stage.
+Single deployable FastAPI service for the first AMS diagnosis stage, with a lightweight dashboard for inspecting workflow execution state.
 
 Flow:
 
 ```text
+<<<<<<< Updated upstream
 incident webhook -> connector -> normaliser -> local categorisation LangGraph node
+=======
+incident webhook -> connector -> normalizer -> categorisation -> optional L2 RCA agent -> optional fix agent -> ServiceNow notification
+>>>>>>> Stashed changes
 ```
 
 This service embeds the categorisation agent as the `categorization_layer` Python package. It does not call a separately deployed categorisation API.
@@ -17,9 +21,12 @@ This service embeds the categorisation agent as the `categorization_layer` Pytho
 - `POST /webhook/servicenow`
 - `POST /webhook/github`
 - `GET /health`
+- `GET /dashboard/workflow` to fetch the workflow graph metadata for the UI
+- `GET /dashboard/executions/latest` to fetch the latest recorded execution summary
 
 ## Runtime Ownership
 
+- `server.py` owns the FastAPI entry points and dashboard API responses.
 - `issuelayer/` owns source event creation and normalisation.
 - `workflows/intake_categorisation_workflow.py` owns LangGraph orchestration.
 - `categorization_layer/` owns deterministic and agentic categorisation logic.
