@@ -1,16 +1,14 @@
 """FastAPI entry point for the AMS monitoring intake + categorisation service."""
 
+import json
+import os
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-<<<<<<< Updated upstream
-
-load_dotenv(override=True)
-
-=======
-from typing import Any
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Any
 
 
 class WebhookPayload(BaseModel):
@@ -19,7 +17,6 @@ class WebhookPayload(BaseModel):
 load_dotenv(override=True)
 
 from dashboard_state import _json_safe_value, latest_execution, record_execution  # noqa: E402
->>>>>>> Stashed changes
 from workflows.intake_categorisation_workflow import (  # noqa: E402
     GatewayError,
     run_intake_categorisation_workflow,
@@ -103,14 +100,10 @@ async def _run_gateway(source: str, request: Request, *, include_raw_body: bool 
             return JSONResponse({"status": "ignored", "reason": exc.detail}, status_code=200)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-<<<<<<< Updated upstream
-    return JSONResponse(final_state.get("response", {"status": final_state.get("status", "completed")}), status_code=200)
-=======
     response_body = final_state.get("response", {"status": final_state.get("status", "completed")})
     safe_response_body = _json_safe_value(response_body)
     record_execution(safe_response_body)
     return JSONResponse(safe_response_body, status_code=200)
->>>>>>> Stashed changes
 
 
 @app.post("/webhook/incidents/{source}")
@@ -138,8 +131,6 @@ async def health():
     return {"status": "ok", "supported_sources": supported_sources()}
 
 
-<<<<<<< Updated upstream
-=======
 @app.get("/dashboard/workflow")
 async def dashboard_workflow():
     return {
@@ -163,7 +154,6 @@ async def dashboard_latest_execution():
     return {"status": "ok", "execution": execution}
 
 
->>>>>>> Stashed changes
 @app.get("/")
 async def root():
     return {

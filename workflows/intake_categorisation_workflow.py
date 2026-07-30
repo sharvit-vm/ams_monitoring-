@@ -38,11 +38,8 @@ class IntakeCategorisationState(TypedDict, total=False):
     source_event: SourceEvent
     error_event: ErrorEvent
     categorisation: dict[str, Any]
-<<<<<<< Updated upstream
-=======
     l2_rca_result: dict[str, Any]
     fix_agent_result: dict[str, Any]
->>>>>>> Stashed changes
     status: str
     response: dict[str, Any]
 
@@ -78,8 +75,6 @@ def _verify_github_signature(payload_bytes: bytes, sig_header: str, webhook_secr
         raise GatewayError(401, "Invalid webhook signature")
 
 
-<<<<<<< Updated upstream
-=======
 def _should_route_to_l2(categorisation: dict[str, Any]) -> bool:
     if categorisation.get("reject") or not categorisation.get("is_valid_incident", True):
         return False
@@ -138,7 +133,6 @@ def _build_l2_request(event: ErrorEvent, categorisation: dict[str, Any]) -> dict
 
 # ── Connector parsers ─────────────────────────────────────────────────────────
 
->>>>>>> Stashed changes
 def _parse_servicenow(state: IntakeCategorisationState) -> SourceEvent:
     payload = state["payload"]
     _verify_shared_token(
@@ -279,19 +273,6 @@ def build_intake_categorisation_workflow():
             f"human_review={result_payload.get('needs_human_review')}, "
             f"action={result_payload.get('recommended_next_action')}"
         )
-<<<<<<< Updated upstream
-        return {
-            **state,
-            "categorisation": result_payload,
-            "status": "categorised",
-            "response": {
-                "status": "categorised",
-                "source_event_id": state["source_event"].id,
-                "event_id": event.id,
-                "normalised_event": normalised_event_log_payload(event),
-                "categorisation": result_payload,
-            },
-=======
         return {**state, "categorisation": result_payload, "status": "categorised"}
 
     # ── Node 4: L2 RCA ────────────────────────────────────────────────────────
@@ -367,7 +348,6 @@ def build_intake_categorisation_workflow():
             "categorisation":  state.get("categorisation"),
             "l2_rca":          state.get("l2_rca_result"),
             "fix_agent":       state.get("fix_agent_result"),
->>>>>>> Stashed changes
         }
         return {**state, "response": response}
 
