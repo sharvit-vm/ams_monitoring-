@@ -529,10 +529,11 @@ function buildNodeStatus(nodes: WorkflowNode[], execution: ReturnType<typeof der
   }));
 }
 
-function buildNavItems(flags: { hasWorkflow: boolean }): NavItem[] {
-  const items: NavItem[] = [{ id: 'overview', label: 'Overview', icon: DashboardIcon }];
-  if (flags.hasWorkflow) items.push({ id: 'workflow', label: 'Workflow', icon: AccountTreeIcon });
-  return items;
+function buildNavItems(_flags: { hasWorkflow: boolean }): NavItem[] {
+  return [
+    { id: 'overview', label: 'Overview', icon: DashboardIcon },
+    { id: 'workflow', label: 'Workflow', icon: AccountTreeIcon },
+  ];
 }
 
 function objectRows(record: Record<string, unknown>): Array<[string, unknown]> {
