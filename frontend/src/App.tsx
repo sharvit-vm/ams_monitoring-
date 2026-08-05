@@ -597,7 +597,7 @@ function buildReadableReport(execution: ReturnType<typeof deriveExecution>): Arr
   const agent = firstValue([execution.rca.recommended_agent, execution.incident.assignedAgent]);
   const confidence = firstValue([execution.l2Response.confidence, execution.categorisation.confidence]);
   const actions = Array.isArray(execution.dbExecution.actions) ? execution.dbExecution.actions.map(displayValue).join(', ') : undefined;
-  return [
+  const rows: Array<[string, unknown]> = [
     ['Incident', execution.incident.id],
     ['Application', execution.incident.application],
     ['Root Cause', rootCause],
@@ -605,7 +605,8 @@ function buildReadableReport(execution: ReturnType<typeof deriveExecution>): Arr
     ['Agent Used', agent],
     ['Confidence', confidence === undefined ? undefined : `${displayValue(confidence)}%`],
     ['Actions Taken', actions],
-  ].filter(([, value]) => value !== undefined && value !== null && value !== '');
+  ];
+  return rows.filter(([, value]) => value !== undefined && value !== null && value !== '');
 }
 
 function humanReadableLine(value: string) {
