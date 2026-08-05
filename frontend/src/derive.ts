@@ -1,21 +1,6 @@
 import type { WorkflowResponse } from './api';
 
 type AnyRecord = Record<string, any>;
-type Node = {
-  id: string;
-  position: { x: number; y: number };
-  data: Record<string, unknown>;
-  type: string;
-  className: string;
-};
-type Edge = {
-  id: string;
-  source: string;
-  target: string;
-  label?: string;
-  animated: boolean;
-  className: string;
-};
 
 export function asRecord(value: unknown): AnyRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as AnyRecord : {};
@@ -57,62 +42,15 @@ export function deriveExecution(raw: unknown) {
       assignedAgent: rca.recommended_agent || categorisation.selected_agent || 'Unknown',
       businessImpact: categorisation.business_impact || 'Unknown',
     },
-    metrics: {
-      pipelineDuration: l2Response.execution?.duration_ms || dbMetrics.stage_durations_ms?.total,
-      llmLatency: l2Metrics.llm_latency_ms,
-      apiLatency: l2.execution?.duration_ms,
-      dbLatency: dbMetrics.stage_durations_ms?.health_read,
-      serviceNowLatency: dbMetrics.stage_durations_ms?.sn_notification,
-      retryCount: l2Metrics.retry_count || dbMetrics.execution?.retry_count || 0,
-      externalCalls: countExternalCalls(response),
-    },
     overallObservability: collectOverallMetrics(response),
     llmObservability: collectLlmMetrics(response),
     rcaReport: buildRcaReport(response),
   };
 }
 
-export function buildFlow(workflow: WorkflowResponse, raw: unknown): { nodes: Node[]; edges: Edge[] } {
-  const data = deriveExecution(raw);
-  const completed = new Set(['connector', 'normalizer']);
-  if (Object.keys(data.categorisation).length) completed.add('categorization');
-  if (data.l2.status === 'completed' || Object.keys(data.l2Response).length) completed.add('l2_rca');
-  if (Object.keys(data.dbExecution).length) completed.add('db_fix');
-  if (data.dbExecution.sn_notification) completed.add('servicenow');
-
-  const failed = new Set<string>();
-  if (data.l2.status === 'failed' || data.l2.status === 'DOWNSTREAM_FAILED') failed.add('l2_rca');
-  if (data.dbExecution.status === 'FAILED' || data.dbExecution.status === 'DOWNSTREAM_FAILED') failed.add('db_fix');
-
-  return {
-    nodes: workflow.nodes.map((node, index) => ({
-      id: node.id,
-      position: { x: index * 230, y: index % 2 === 0 ? 50 : 165 },
-      data: {
-        label: node.label,
-        service: node.service,
-        endpoint: node.endpoint,
-        instance_url: node.instance_url,
-        configured_url: node.configured_url,
-        status: failed.has(node.id) ? 'Failed' : completed.has(node.id) ? 'Completed' : 'Waiting',
-      },
-      type: 'default',
-      className: failed.has(node.id) ? 'flow-node failed' : completed.has(node.id) ? 'flow-node completed' : 'flow-node',
-    })),
-    edges: workflow.edges.map((edge) => ({
-      id: `${edge.source}-${edge.target}`,
-      source: edge.source,
-      target: edge.target,
-      label: edge.condition,
-      animated: true,
-      className: 'flow-edge',
-    })),
-  };
-}
-
 export function toLogLines(raw: unknown): string[] {
   const data = deriveExecution(raw);
-  const lines = [
+  const lines: [string, unknown][] = [
     ['Connector', data.response.source_event_id],
     ['Normalizer', data.response.event_id],
     ['Categorization', data.categorisation.support_level],
@@ -125,7 +63,7 @@ export function toLogLines(raw: unknown): string[] {
     .map(([label, value]) => `${new Date().toLocaleTimeString()} ${label}: ${String(value)}`);
 }
 
-export function chartRows(metrics: Record<string, any>) {
+export function chartRows(metrics: AnyRecord) {
   const durations = asRecord(metrics.stage_durations_ms);
   return Object.entries(durations)
     .filter(([, value]) => typeof value === 'number')
@@ -159,8 +97,6 @@ export function collectOverallMetrics(raw: unknown): ObservabilityMetric[] {
   addMetric(metrics, 'Database memory usage', dbVerification.memory_usage, 'Database');
   addMetric(metrics, 'Slow queries', dbVerification.slow_queries, 'Database');
   addMetric(metrics, 'Deadlocks', dbVerification.deadlocks, 'Database');
-  addMetric(metrics, 'Queries executed', dbMetrics.queries_executed, 'Database');
-  addMetric(metrics, 'Rows processed', dbMetrics.rows_processed, 'Database');
   addMetric(metrics, 'Actions succeeded', dbMetrics.actions_succeeded, 'Remediation agent');
   addMetric(metrics, 'Actions failed', dbMetrics.actions_failed, 'Remediation agent');
   addMetric(metrics, 'Verification passed', dbMetrics.verification_passed, 'Remediation agent');
@@ -182,18 +118,14 @@ export function collectLlmMetrics(raw: unknown): ObservabilityMetric[] {
 
   addMetric(metrics, 'LLM requests', Object.keys(l2Metrics).length ? 1 : undefined, 'L2 RCA agent');
   addMetric(metrics, 'Model name', l2Metrics.model || l2Response.model, 'LLM provider');
-  addMetric(metrics, 'Prompt latency', l2Metrics.prompt_latency_ms, 'LLM provider');
-  addMetric(metrics, 'Completion latency', l2Metrics.completion_latency_ms, 'LLM provider');
   addMetric(metrics, 'LLM latency', l2Metrics.llm_latency_ms, 'L2 RCA agent');
   addMetric(metrics, 'Input tokens', tokenUsage.input_tokens || tokenUsage.prompt_tokens, 'LLM provider');
   addMetric(metrics, 'Output tokens', tokenUsage.output_tokens || tokenUsage.completion_tokens, 'LLM provider');
   addMetric(metrics, 'Total tokens', tokenUsage.total_tokens, 'LLM provider');
   addMetric(metrics, 'Estimated cost', l2Metrics.estimated_cost || l2Metrics.cost_usd, 'LLM provider');
-  addMetric(metrics, 'Success', l2Metrics.success, 'L2 RCA agent');
-  addMetric(metrics, 'Failure rate', l2Metrics.failure_rate, 'L2 RCA agent');
   addMetric(metrics, 'Confidence', l2Metrics.confidence || l2Response.confidence, 'L2 RCA agent');
 
-  return metrics.filter((metric) => metric.value !== undefined && metric.value !== null && metric.value !== '');
+  return metrics.filter((m) => m.value !== undefined && m.value !== null && m.value !== '');
 }
 
 export function buildRcaReport(raw: unknown) {
@@ -228,7 +160,7 @@ export function buildRcaReport(raw: unknown) {
 }
 
 function buildTimeline(data: ReturnType<typeof deriveExecutionParts>) {
-  const lines = [
+  const lines: [string, unknown][] = [
     ['Connector', data.response.source_event_id],
     ['Normalizer', data.response.event_id],
     ['Categorization', data.categorisation.support_level],
@@ -262,8 +194,8 @@ function addMetric(metrics: ObservabilityMetric[], label: string, value: unknown
 
 function dedupeMetrics(metrics: ObservabilityMetric[]) {
   const seen = new Set<string>();
-  return metrics.filter((metric) => {
-    const key = `${metric.label}:${metric.source}`;
+  return metrics.filter((m) => {
+    const key = `${m.label}:${m.source}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -271,7 +203,7 @@ function dedupeMetrics(metrics: ObservabilityMetric[]) {
 }
 
 function stageSource(name: string) {
-  if (name.includes('postgres') || name.includes('health') || name.includes('query') || name.includes('database')) return 'Database';
+  if (name.includes('postgres') || name.includes('health') || name.includes('database')) return 'Database';
   if (name.includes('sn') || name.includes('notification')) return 'External API';
   if (name.includes('cmdb')) return 'CMDB service';
   return 'Application workflow';
@@ -284,3 +216,6 @@ function countExternalCalls(response: AnyRecord) {
   if (dbExecution.sn_notification) count += 1;
   return count;
 }
+
+// Keep WorkflowResponse import used — suppress unused warning
+export type { WorkflowResponse };
