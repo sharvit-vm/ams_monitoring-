@@ -1,7 +1,21 @@
-import type { Edge, Node } from 'reactflow';
 import type { WorkflowResponse } from './api';
 
 type AnyRecord = Record<string, any>;
+type Node = {
+  id: string;
+  position: { x: number; y: number };
+  data: Record<string, unknown>;
+  type: string;
+  className: string;
+};
+type Edge = {
+  id: string;
+  source: string;
+  target: string;
+  label?: string;
+  animated: boolean;
+  className: string;
+};
 
 export function asRecord(value: unknown): AnyRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as AnyRecord : {};

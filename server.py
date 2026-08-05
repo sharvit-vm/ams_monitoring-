@@ -71,6 +71,33 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
     ]
 
 
+def _dashboard_source_platforms() -> list[dict[str, Any]]:
+    sn_instance = os.getenv("SN_INSTANCE")
+    jira_instance = (
+        os.getenv("JIRA_INSTANCE")
+        or os.getenv("JIRA_BASE_URL")
+        or os.getenv("JIRA_URL")
+    )
+    platforms = [
+        {
+            "id": "servicenow",
+            "label": "ServiceNow",
+            "source": "servicenow",
+            "instance_url": sn_instance,
+            "configured_url": bool(sn_instance),
+        },
+        {
+            "id": "jira",
+            "label": "Jira",
+            "source": "jira",
+            "instance_url": jira_instance,
+            "configured_url": bool(jira_instance),
+        },
+    ]
+    supported = set(supported_sources())
+    return [platform for platform in platforms if platform["source"] in supported]
+
+
 async def _run_gateway(source: str, request: Request, *, include_raw_body: bool = False):
     source_key = source.lower().strip()
     if source_key not in supported_sources():
@@ -143,6 +170,7 @@ async def dashboard_workflow():
             {"source": "db_fix", "target": "servicenow", "condition": "notification enabled"},
         ],
         "supported_sources": supported_sources(),
+        "source_platforms": _dashboard_source_platforms(),
     }
 
 

@@ -15,10 +15,19 @@ export type WorkflowEdge = {
   condition?: string;
 };
 
+export type SourcePlatform = {
+  id: string;
+  label: string;
+  source: string;
+  configured_url?: boolean;
+  instance_url?: string;
+};
+
 export type WorkflowResponse = {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   supported_sources: string[];
+  source_platforms?: SourcePlatform[];
 };
 
 export type LatestExecutionResponse = {
@@ -32,7 +41,7 @@ export type LatestExecutionResponse = {
 };
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_GATEWAY_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_GATEWAY_URL || '',
 });
 
 export async function getWorkflow() {
