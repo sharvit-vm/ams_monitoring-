@@ -26,6 +26,14 @@ from workflows.intake_categorisation_workflow import (  # noqa: E402
 
 app = FastAPI(title="AMS Monitoring Incident Gateway")
 
+_allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
     sn_instance = os.getenv("SN_INSTANCE")
