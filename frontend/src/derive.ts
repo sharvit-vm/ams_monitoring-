@@ -215,7 +215,8 @@ function stageSource(name: string) {
 function countExternalCalls(response: AnyRecord) {
   let count = 0;
   if (response.l2_rca) count += 1;
-  const dbExecution = asRecord(asRecord(asRecord(asRecord(response.l2_rca).response).data).execution);
+  const fixAgent = asRecord(response.fix_agent);
+  const dbExecution = Object.keys(fixAgent).length ? fixAgent : asRecord(asRecord(asRecord(asRecord(response.l2_rca).response).data).execution);
   if (dbExecution.sn_notification) count += 1;
   return count;
 }

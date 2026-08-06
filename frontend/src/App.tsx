@@ -493,9 +493,16 @@ function workflowDetails(
     };
   }
   if (node.id === 'servicenow') {
+    const sn = asRecord(notification);
+    const notified = sn.notified === true;
     return {
-      summary: 'ServiceNow update is prepared for the incident record.',
-      meta: compactList([notification ? 'Notification available' : 'Pending update']),
+      summary: notified
+        ? `ServiceNow incident updated — state: ${displayValue(sn.state)}.`
+        : notification ? `Notification attempted: ${displayValue(asRecord(notification).error ?? 'unknown error')}` : 'ServiceNow update pending.',
+      meta: compactList([
+        notified && sn.sys_id && `sys_id: ${displayValue(sn.sys_id)}`,
+        sn.elapsed_ms && `${displayValue(sn.elapsed_ms)}ms`,
+      ]),
       highlights: [],
     };
   }
