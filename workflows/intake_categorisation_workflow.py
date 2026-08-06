@@ -14,7 +14,7 @@ from langgraph.graph import END, StateGraph
 from agents.code_fix import run_code_fix
 from agents.l3_rca import run_l3_rca
 from categorisation_adapter import categorise_error_event
-from issuelayer.connectors.base import log_intake_snapshot, normalised_event_log_payload
+from issuelayer.connectors.base import log_graph_stage, log_intake_snapshot, normalised_event_log_payload
 from issuelayer.intake.normalizers.router import normalise_source_event
 from issuelayer.intake.schemas import ErrorEvent
 from issuelayer.intake.source_event import SourceEvent
@@ -384,21 +384,25 @@ def build_intake_categorisation_workflow():
     def connector_node(state: IntakeCategorisationState) -> IntakeCategorisationState:
         source = state["source"].lower().strip()
         parser = CONNECTOR_REGISTRY[source]
-        print(f"[graph] Connector started; source={source}")
+        log_graph_stage(1, "connector_started", "running", source=source)
         source_event = parser(state)
-        log_intake_snapshot("raw_source_event", source_event.source, source_event)
-        print(
-            f"[graph] Connector completed; source={source_event.source}, "
-            f"external_id={source_event.external_id}, source_event_id={source_event.id}"
+        log_intake_snapshot("raw_source_event", source_event.source, source_event, stage_order=2)
+        log_graph_stage(
+            3,
+            "connector_completed",
+            "completed",
+            source=source_event.source,
+            external_id=source_event.external_id,
+            source_event_id=source_event.id,
         )
         return {**state, "source_event": source_event, "status": "source_event_created"}
 
     def normalizer_node(state: IntakeCategorisationState) -> IntakeCategorisationState:
         source_event = state["source_event"]
-        print(f"[graph] Normalizer started; source={source_event.source}, source_event_id={source_event.id}")
+        log_graph_stage(4, "normalizer_started", "running", source=source_event.source, source_event_id=source_event.id)
         error_event = normalise_source_event(source_event)
         if error_event is None:
-            print(f"[graph] Normalizer ignored event; source_event_id={source_event.id}")
+            log_graph_stage(5, "normalizer_ignored", "completed", source_event_id=source_event.id)
             return {
                 **state,
                 "status": "normalised_event_ignored",
@@ -412,24 +416,32 @@ def build_intake_categorisation_workflow():
             "normalised_error_event",
             source_event.source,
             normalised_event_log_payload(error_event),
+            stage_order=5,
         )
-        print(
-            f"[graph] Normalizer completed; event={error_event.id}, "
-            f"incident={error_event.incident_id or error_event.external_id}, "
-            f"message={error_event.message[:100]}"
+        log_graph_stage(
+            6,
+            "normalizer_completed",
+            "completed",
+            event=error_event.id,
+            incident=error_event.incident_id or error_event.external_id,
+            message=error_event.message[:100],
         )
         return {**state, "error_event": error_event, "status": "normalised"}
 
     def categorisation_node(state: IntakeCategorisationState) -> IntakeCategorisationState:
         event = state["error_event"]
-        print(f"[graph] Categorisation started; event={event.id}, incident={event.incident_id or event.external_id}")
+        log_graph_stage(7, "categorisation_started", "running", event=event.id, incident=event.incident_id or event.external_id)
         result_payload = categorise_error_event(event)
-        print(
-            f"[graph] Categorisation completed; event={event.id}, "
-            f"level={result_payload.get('rca_level')}, category={result_payload.get('category')}, "
-            f"confidence={result_payload.get('confidence')}, "
-            f"human_review={result_payload.get('needs_human_review')}, "
-            f"action={result_payload.get('recommended_next_action')}"
+        log_graph_stage(
+            8,
+            "categorisation_completed",
+            "completed",
+            event=event.id,
+            level=result_payload.get("rca_level"),
+            category=result_payload.get("category"),
+            confidence=result_payload.get("confidence"),
+            human_review=result_payload.get("needs_human_review"),
+            action=result_payload.get("recommended_next_action"),
         )
         return {**state, "categorisation": result_payload, "status": "categorised"}
 
