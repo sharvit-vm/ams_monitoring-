@@ -581,57 +581,194 @@ button, input { font: inherit; }
 .arch-row span { color: #2d4035; font-size: 11px; text-align: center; }
 .arch-row em { position: absolute; right: -11px; top: 28px; color: #94a3b8; font-style: normal; }
 
-/* ── RCA Summary panel ────────────────────────────────────────────────────── */
+/* ── RCA Full Report Panel ─────────────────────────────────────────────────── */
 
-.rca-summary {
+.rca-report-full { grid-column: 1 / -1; }
+
+.rca-report {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
 }
 
-.rca-section {
+.rca-report-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+}
+
+.rca-report-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 24px;
+  flex: 1;
+}
+
+.rca-meta-row {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
 }
 
-.rca-section-label {
+.rca-meta-row span {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7a9485;
+}
+
+.rca-meta-row b {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f1f14;
+}
+
+.rca-priority { color: #dc2626 !important; }
+
+.rca-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: 1.5px solid #bbf7d0;
+  background: #f0fdf4;
+  flex: 0 0 auto;
+}
+
+.rca-status-badge svg { color: #16a34a; font-size: 20px; }
+.rca-status-badge span { font-size: 13px; font-weight: 700; color: #166534; }
+
+.rca-report-divider {
+  height: 1px;
+  background: #e8f0e9;
+  margin: 16px 0;
+}
+
+.rca-report-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.rca-report-col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.rca-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rca-block-title {
   font-size: 12px !important;
   font-weight: 700 !important;
-  color: #0f1f14 !important;
   line-height: 1.2 !important;
 }
 
-.rca-section-body {
+.rca-title-red    { color: #dc2626 !important; }
+.rca-title-orange { color: #d97706 !important; }
+.rca-title-blue   { color: #2563eb !important; }
+.rca-title-green  { color: #16a34a !important; }
+
+.rca-block-text {
   font-size: 13px !important;
   color: #2d4035 !important;
-  line-height: 1.55 !important;
+  line-height: 1.6 !important;
   margin: 0 !important;
 }
 
-.rca-action-list {
+.rca-block-text.muted { color: #7a9485 !important; }
+
+.rca-check-list {
   list-style: none;
   padding: 0;
-  margin: 4px 0 0;
+  margin: 0;
   display: grid;
   gap: 7px;
 }
 
-.rca-action-list li {
+.rca-check-list li {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   font-size: 13px;
   color: #2d4035;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
-.rca-action-list svg {
-  color: #16a34a;
-  font-size: 16px;
-  flex: 0 0 auto;
-  margin-top: 1px;
+.rca-check-list svg { color: #16a34a; font-size: 15px; flex: 0 0 auto; margin-top: 2px; }
+.rca-check-blue svg { color: #2563eb; }
+.rca-check-list li > div { display: flex; flex-direction: column; gap: 2px; }
+
+.rca-result-ok   { font-size: 10px; font-weight: 700; color: #16a34a; font-style: normal; }
+.rca-result-skip { font-size: 10px; font-weight: 700; color: #94a3b8; font-style: normal; }
+
+.rca-issue-list { display: grid; gap: 6px; }
+
+.rca-issue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #fefce8;
+  border: 1px solid #fde68a;
 }
+
+.rca-issue-name { font-size: 12px; color: #1a2e20; font-weight: 500; }
+
+.rca-severity {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.rca-sev-high     { background: #fee2e2; color: #dc2626; }
+.rca-sev-medium   { background: #fef3c7; color: #d97706; }
+.rca-sev-low      { background: #dcfce7; color: #16a34a; }
+.rca-sev-critical { background: #fce7f3; color: #9d174d; }
+
+.rca-verify-grid { display: grid; gap: 6px; }
+
+.rca-verify-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid #eef2ef;
+  font-size: 12px;
+}
+
+.rca-verify-row span { color: #5a7060; }
+.rca-verify-row b    { color: #0f1f14; font-weight: 600; }
+.rca-verify-row b.rca-ok { color: #16a34a; }
+
+.rca-block-sn {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.rca-block-sn .rca-meta-row {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid #d1fae5;
+}
+
+.rca-block-sn .rca-meta-row:last-child { border-bottom: none; }
 
 .rca-download-btn {
   margin-top: 4px !important;
@@ -651,9 +788,16 @@ button, input { font: inherit; }
   border-color: #86efac !important;
 }
 
-.rca-download-btn.Mui-disabled {
-  opacity: 0.45 !important;
-}
+.rca-download-btn.Mui-disabled { opacity: 0.45 !important; }
+
+/* legacy aliases */
+.rca-summary { display: flex; flex-direction: column; gap: 16px; }
+.rca-section { display: flex; flex-direction: column; gap: 5px; }
+.rca-section-label { font-size: 12px !important; font-weight: 700 !important; color: #0f1f14 !important; }
+.rca-section-body  { font-size: 13px !important; color: #2d4035 !important; line-height: 1.55 !important; margin: 0 !important; }
+.rca-action-list { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 7px; }
+.rca-action-list li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #2d4035; }
+.rca-action-list svg { color: #16a34a; font-size: 16px; flex: 0 0 auto; margin-top: 1px; }
 
 /* ── Download button (kept for other uses) ────────────────────────────────── */
 
