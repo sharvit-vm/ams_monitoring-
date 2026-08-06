@@ -63,6 +63,24 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
             "endpoint": "in-process",
         },
         {
+            "id": "l1_placeholder",
+            "label": "L1 Placeholder",
+            "service": "workflow",
+            "endpoint": "in-process",
+        },
+        {
+            "id": "l3_rca",
+            "label": "L3 RCA Agent",
+            "service": "agents.l3_rca",
+            "endpoint": "in-process",
+        },
+        {
+            "id": "codefix",
+            "label": "Codefix Agent",
+            "service": "agents.code_fix",
+            "endpoint": "in-process",
+        },
+        {
             "id": "db_fix",
             "label": "Fix Agent",
             "service": "db_fix",
@@ -173,8 +191,11 @@ async def dashboard_workflow():
         "edges": [
             {"source": "connector", "target": "normalizer"},
             {"source": "normalizer", "target": "categorization"},
+            {"source": "categorization", "target": "l1_placeholder", "condition": "support_level == L1"},
             {"source": "categorization", "target": "l2_rca", "condition": "support_level == L2"},
+            {"source": "categorization", "target": "l3_rca", "condition": "support_level == L3"},
             {"source": "l2_rca", "target": "db_fix", "condition": "recommended_agent == db_fix_agent"},
+            {"source": "l3_rca", "target": "codefix", "condition": "confidence != low"},
             {"source": "db_fix", "target": "servicenow", "condition": "notification enabled"},
         ],
         "supported_sources": supported_sources(),
@@ -195,6 +216,6 @@ async def root():
     return {
         "application": "AMS Monitoring Incident Gateway",
         "status": "running",
-        "flow": "connector -> normalizer -> categorisation",
+        "flow": "connector -> normalizer -> categorisation -> L1/L2/L3 route",
         "supported_sources": supported_sources(),
     }
