@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from db_fix.agents.db_fix_agent import DBFixAgent
 from db_fix.models.request import RCARequest
 from db_fix.utils.logger import logger
+from dashboard_state import latest_execution, record_execution
 from governance.approvals import approval_store
 from governance.telemetry import emit_governance_event
 
@@ -37,6 +38,24 @@ def _execute_db_fix_plan(plan) -> dict:
 
 approval_store.register_executor("db_fix", _execute_db_fix_plan)
 
+def _record_remediation_dashboard_update(plan) -> None:
+    current = latest_execution()
+    if not current or not isinstance(current.get("response"), dict):
+        return
+    response = dict(current["response"])
+    plan_payload = plan.model_dump()
+    response["fix_agent"] = plan_payload
+    if plan.execution_result:
+        response["db_fix"] = plan.execution_result
+        l2_rca = response.get("l2_rca")
+        if isinstance(l2_rca, dict):
+            l2_response = l2_rca.get("response")
+            if isinstance(l2_response, dict):
+                data = l2_response.setdefault("data", {})
+                if isinstance(data, dict):
+                    data["execution"] = plan.execution_result
+    response["status"] = plan.status
+    record_execution(response)
 
 @health_router.get("/health")
 @health_router.head("/health")
@@ -90,6 +109,7 @@ def approve_remediation(approval_id: str, decision: ApprovalDecision):
             approver=decision.approver,
             reason=decision.reason,
         )
+        _record_remediation_dashboard_update(plan)
         return {"status": plan.status, "remediation_plan": plan.model_dump()}
     except KeyError:
         return JSONResponse(status_code=404, content={"status": "not_found", "approval_id": approval_id})
@@ -113,6 +133,7 @@ def reject_remediation(approval_id: str, decision: ApprovalDecision):
             status="MANUAL_INTERVENTION_REQUIRED",
             reason=decision.reason,
         )
+        _record_remediation_dashboard_update(plan)
         return {"status": plan.status, "remediation_plan": plan.model_dump()}
     except KeyError:
         return JSONResponse(status_code=404, content={"status": "not_found", "approval_id": approval_id})

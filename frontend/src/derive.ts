@@ -15,7 +15,8 @@ export function deriveExecution(raw: unknown) {
   const l2Data = asRecord(l2Response.data);
   const rca = asRecord(l2Data.rca);
   const fixAgent = asRecord(response.fix_agent);
-  const dbExecution = Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution);
+  const fixAgentExecution = asRecord(fixAgent.execution_result);
+  const dbExecution = Object.keys(fixAgentExecution).length ? fixAgentExecution : Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution);
   const dbMetrics = asRecord(dbExecution.metrics);
   const dbVerification = asRecord(dbExecution.verification);
   const dbExplanation = asRecord(dbExecution.explanation);
@@ -83,7 +84,8 @@ export function collectOverallMetrics(raw: unknown): ObservabilityMetric[] {
   const l2Response = asRecord(l2.response);
   const l2Execution = asRecord(l2.execution);
   const fixAgent = asRecord(response.fix_agent);
-  const dbExecution = Object.keys(fixAgent).length ? fixAgent : asRecord(asRecord(l2Response.data).execution);
+  const fixAgentExecution = asRecord(fixAgent.execution_result);
+  const dbExecution = Object.keys(fixAgentExecution).length ? fixAgentExecution : Object.keys(fixAgent).length ? fixAgent : asRecord(asRecord(l2Response.data).execution);
   const dbMetrics = asRecord(dbExecution.metrics);
   const dbVerification = asRecord(dbExecution.verification);
   const stages = asRecord(dbMetrics.stage_durations_ms);
@@ -184,7 +186,8 @@ function deriveExecutionParts(raw: unknown) {
   const l2Data = asRecord(l2Response.data);
   const rca = asRecord(l2Data.rca);
   const fixAgent = asRecord(response.fix_agent);
-  const dbExecution = Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution);
+  const fixAgentExecution = asRecord(fixAgent.execution_result);
+  const dbExecution = Object.keys(fixAgentExecution).length ? fixAgentExecution : Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution);
   const dbExplanation = asRecord(dbExecution.explanation);
   return { response, categorisation, normalised, l2, l2Response, rca, dbExecution, dbExplanation };
 }
@@ -220,5 +223,5 @@ function countExternalCalls(response: AnyRecord) {
   return count;
 }
 
-// Keep WorkflowResponse import used — suppress unused warning
+// Keep WorkflowResponse import used for exported API typing.
 export type { WorkflowResponse };

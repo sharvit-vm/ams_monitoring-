@@ -47,6 +47,25 @@ import { asRecord, deriveExecution } from './derive';
 
 type NodeStatus = 'completed' | 'running' | 'pending' | 'skipped';
 
+type DisplayNode = {
+  id: string;
+  index: number;
+  status: NodeStatus;
+  title: string;
+  subtitle: string;
+  icon: ReactNode;
+  metrics: string[];
+  accent: 'green' | 'blue' | 'purple';
+  downstream: boolean;
+  approvalId: string;
+  approvalStatus?: string;
+  l2Status?: NodeStatus;
+  l3Status?: NodeStatus;
+  l2Metrics?: string[];
+  l3Metrics?: string[];
+  followupStatus?: NodeStatus;
+};
+
 export function App() {
   const queryClient = useQueryClient();
   const workflow = useQuery({ queryKey: ['workflow'], queryFn: getWorkflow });
@@ -321,18 +340,7 @@ function NodeBlock({
   onSelectApproval,
   latestApprovalId,
 }: {
-  node: {
-    id: string;
-    index: number;
-    status: NodeStatus;
-    title: string;
-    subtitle: string;
-    icon: ReactNode;
-    metrics: string[];
-    accent: 'green' | 'blue' | 'purple';
-    downstream: boolean;
-    approvalId: string;
-  };
+  node: DisplayNode;
   selectedApprovalId: string;
   onSelectApproval: (value: string) => void;
   latestApprovalId: string;
@@ -354,18 +362,18 @@ function NodeBlock({
             label="L2"
             title="L2 RCA Agent"
             subtitle="Medium Complexity"
-            status={selectedApprovalId ? 'running' : 'pending'}
+            status={node.l2Status ?? 'pending'}
             icon={<SettingsSuggestOutlinedIcon />}
-            metrics={['Confidence 92.45%', 'Time 3m 12s']}
+            metrics={node.l2Metrics ?? ['Waiting for L2 RCA result']}
             onClick={latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
           />
           <BranchRcaCard
             label="L3"
             title="L3 RCA Agent"
             subtitle="High Complexity"
-            status="skipped"
+            status={node.l3Status ?? 'skipped'}
             icon={<CodeOutlinedIcon />}
-            metrics={['Confidence 97.00%', 'Time 0s']}
+            metrics={node.l3Metrics ?? ['Skipped']}
           />
         </Box>
         <Box className="merge-spine">
@@ -378,7 +386,8 @@ function NodeBlock({
   }
 
   if (node.id === 'db_fix') {
-    const waiting = Boolean(selectedApprovalId);
+    const waiting = node.status !== 'completed' && (node.approvalStatus === 'WAITING_FOR_APPROVAL' || Boolean(selectedApprovalId));
+    const followupStatus = node.followupStatus ?? (node.status === 'completed' ? 'completed' : 'pending');
     return (
       <Box className="workflow-sequence">
         <WorkflowCard
@@ -389,18 +398,18 @@ function NodeBlock({
           status={waiting ? 'running' : node.status}
           metrics={node.metrics}
           accent={node.accent}
-          onClickApproval={waiting ? () => onSelectApproval(selectedApprovalId) : latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
+          onClickApproval={waiting ? () => onSelectApproval(selectedApprovalId || latestApprovalId) : latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
           actionLabel={waiting ? 'Waiting' : undefined}
         />
-        <ApprovalGateCard approvalId={latestApprovalId} onOpen={latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined} />
+        <ApprovalGateCard approvalId={latestApprovalId} onOpen={latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined} status={waiting ? 'running' : followupStatus} />
         <Box className="connector-line connector-wide" />
         <WorkflowCard
           index={node.index + 1}
           title="Verification"
           subtitle="Verify remediation & database health"
           icon={<CheckCircleOutlineIcon />}
-          status="pending"
-          metrics={['Health Before Failed', 'Health After Healthy']}
+          status={followupStatus}
+          metrics={followupStatus === 'completed' ? ['Verification Passed', 'Health After Healthy'] : ['Waiting for remediation result']}
           accent="green"
         />
         <WorkflowCard
@@ -408,15 +417,15 @@ function NodeBlock({
           title="Response Builder"
           subtitle="Prepare RCA & remediation summary"
           icon={<DescriptionOutlinedIcon />}
-          status="pending"
-          metrics={['Summary Size 1.2 MB', 'Time 1m 10s']}
+          status={followupStatus}
+          metrics={followupStatus === 'completed' ? ['RCA summary prepared', 'Incident updated'] : ['Waiting for remediation result']}
           accent="purple"
         />
         <Box className="bottom-arrow-column">
           <span className="bottom-arrow" />
           <span className="bottom-arrow" />
         </Box>
-        <BottomNotificationRow />
+        <BottomNotificationRow completed={followupStatus === 'completed'} />
       </Box>
     );
   }
@@ -440,7 +449,6 @@ function NodeBlock({
     </Box>
   );
 }
-
 function BranchRcaCard(props: {
   label: string;
   title: string;
@@ -473,7 +481,7 @@ function BranchRcaCard(props: {
   );
 }
 
-function ApprovalGateCard({ approvalId, onOpen }: { approvalId: string; onOpen?: () => void }) {
+function ApprovalGateCard({ approvalId, onOpen, status = approvalId ? 'running' : 'pending' }: { approvalId: string; onOpen?: () => void; status?: NodeStatus }) {
   return (
     <Box className={`approval-gate ${onOpen ? 'clickable' : ''}`} onClick={onOpen}>
       <Box className="approval-gate-card">
@@ -481,10 +489,10 @@ function ApprovalGateCard({ approvalId, onOpen }: { approvalId: string; onOpen?:
         <Box>
           <Typography className="workflow-card-title">Human Approval</Typography>
           <Typography className="workflow-card-subtitle">
-            {approvalId ? `Remediation ${approvalId.slice(0, 8)} awaiting approval` : 'Waiting for a remediation plan'}
+            {status === 'completed' ? 'Approval completed and remediation executed' : approvalId ? `Remediation ${approvalId.slice(0, 8)} awaiting approval` : 'Waiting for a remediation plan'}
           </Typography>
         </Box>
-        <StatusDot status={approvalId ? 'running' : 'pending'} label={approvalId ? 'Awaiting' : 'Pending'} />
+        <StatusDot status={status} label={approvalId && status === 'running' ? 'Awaiting' : undefined} />
       </Box>
     </Box>
   );
@@ -506,7 +514,7 @@ function openSourceCreatePage(platform?: { source: string; instance_url?: string
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-function BottomNotificationRow() {
+function BottomNotificationRow({ completed = false }: { completed?: boolean }) {
   return (
     <Box className="bottom-notifications">
       <WorkflowCard
@@ -514,8 +522,8 @@ function BottomNotificationRow() {
         title="ServiceNow Notification"
         subtitle="Update incident with resolution"
         icon={<PaperPlaneOutlinedIcon />}
-        status="pending"
-        metrics={['Success Rate 98.00%', 'Time 45s']}
+        status={completed ? 'completed' : 'pending'}
+        metrics={completed ? ['Incident updated', 'State Resolved'] : ['Waiting for response']}
         accent="green"
         compact
       />
@@ -616,6 +624,35 @@ function Meta({ label, value }: { label: string; value: string }) {
   );
 }
 
+function hasRecordData(value: Record<string, unknown>) {
+  return Boolean(value && Object.keys(value).length);
+}
+
+function normaliseStatus(value: unknown) {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function isCompleteStatus(value: unknown) {
+  return ['COMPLETED', 'SUCCESS', 'SUCCEEDED', 'SUCCESSFUL', 'EXECUTED', 'DONE', 'RESOLVED', 'HEALTHY', 'PASSED'].includes(normaliseStatus(value));
+}
+
+function isWaitingStatus(value: unknown) {
+  return ['WAITING_FOR_APPROVAL', 'PENDING_APPROVAL', 'APPROVAL_REQUIRED', 'READY_FOR_APPROVAL'].includes(normaliseStatus(value));
+}
+
+function isFailedStatus(value: unknown) {
+  return ['FAILED', 'ERROR', 'EXECUTION_FAILED', 'REJECTED', 'BLOCKED'].includes(normaliseStatus(value));
+}
+
+function routeLevel(execution: ReturnType<typeof deriveExecution>) {
+  return normaliseStatus(execution.categorisation.support_level || execution.categorisation.level || execution.categorisation.rca_level);
+}
+
+function percentMetric(label: string, value: unknown) {
+  if (typeof value !== 'number') return undefined;
+  return `${label} ${Math.round(value * 100)}%`;
+}
+
 function buildDisplayNodes(
   nodes: WorkflowNode[],
   execution: ReturnType<typeof deriveExecution>,
@@ -623,38 +660,38 @@ function buildDisplayNodes(
   selectedApproval?: RemediationPlan,
 ) {
   const statusById = new Map<string, NodeStatus>();
-  const approvalStatus = latestApproval?.status || selectedApproval?.status || '';
-  const approvalNodeId = latestApproval?.agent_type === 'db_fix' || selectedApproval?.agent_type === 'db_fix' ? 'db_fix' : undefined;
+  const approvalStatus = latestApproval?.status || selectedApproval?.status || String(execution.dbExecution.status || '');
+  const hasExecution = hasRecordData(execution.response);
+  const hasCategorisation = hasRecordData(execution.categorisation);
+  const hasL2Result = hasRecordData(execution.l2) || hasRecordData(execution.l2Response) || hasRecordData(execution.rca);
+  const hasDbResult = hasRecordData(execution.dbExecution);
+  const level = routeLevel(execution);
+  const dbStatus = execution.dbExecution.overall_status || execution.dbExecution.status || execution.dbMetrics.overall_status || execution.dbVerification.status;
+  const dbComplete = hasDbResult && (isCompleteStatus(dbStatus) || isCompleteStatus(execution.dbVerification.status) || execution.dbMetrics.verification_passed === true);
+  const dbWaiting = isWaitingStatus(approvalStatus) || isWaitingStatus(execution.response.status);
+  const dbFailed = hasDbResult && (isFailedStatus(dbStatus) || isFailedStatus(execution.dbExecution.status));
 
-  const hasExecution = Boolean(Object.keys(execution.response).length);
   statusById.set('connector', hasExecution ? 'completed' : 'pending');
   statusById.set('normalizer', hasExecution ? 'completed' : 'pending');
   const guardrails = asRecord(execution.response.guardrails);
-  const hasGuardrailData = Boolean(Object.keys(guardrails).length);
-  const guardrailStatus: NodeStatus = hasGuardrailData ? (guardrails.allowed === false ? 'skipped' : 'completed') : 'pending';
+  const hasGuardrailData = hasRecordData(guardrails);
+  const guardrailStatus: NodeStatus = hasGuardrailData ? (guardrails.allowed === false ? 'skipped' : 'completed') : hasExecution ? 'running' : 'pending';
   statusById.set('guardrails', guardrailStatus);
   statusById.set('security_guardrails', guardrailStatus);
-  statusById.set('categorization', hasExecution ? 'completed' : 'pending');
-  statusById.set('l2_rca', execution.l2.status === 'completed' ? 'running' : hasExecution ? 'completed' : 'pending');
-  statusById.set('l3_rca', execution.response.status === 'codefix_waiting_for_approval' ? 'running' : 'skipped');
+  statusById.set('categorization', hasCategorisation ? 'completed' : hasExecution ? 'running' : 'pending');
+  statusById.set('l2_rca', hasL2Result ? 'completed' : level === 'L2' && hasCategorisation ? 'running' : level ? 'skipped' : 'pending');
+  statusById.set('l3_rca', level === 'L3' ? (execution.response.status === 'codefix_waiting_for_approval' ? 'running' : hasCategorisation ? 'running' : 'pending') : hasCategorisation ? 'skipped' : 'pending');
   statusById.set('fix_agent', execution.response.status === 'codefix_waiting_for_approval' ? 'running' : 'pending');
-  statusById.set('db_fix', approvalNodeId ? (approvalStatus === 'WAITING_FOR_APPROVAL' ? 'running' : approvalStatus === 'EXECUTED' ? 'completed' : 'pending') : (hasExecution ? 'running' : 'pending'));
-  statusById.set('servicenow', hasExecution ? 'pending' : 'pending');
+  statusById.set('db_fix', dbComplete ? 'completed' : dbFailed ? 'skipped' : dbWaiting ? 'running' : hasDbResult ? 'completed' : level === 'L2' && hasL2Result ? 'pending' : 'pending');
+  statusById.set('servicenow', dbComplete ? 'completed' : 'pending');
   statusById.set('jira', 'skipped');
   statusById.set('github', 'skipped');
 
-  const config: Array<{
-    id: string;
-    index: number;
-    status: NodeStatus;
-    title: string;
-    subtitle: string;
-    icon: ReactNode;
-    metrics: string[];
-    accent: 'green' | 'blue' | 'purple';
-    downstream: boolean;
-    approvalId: string;
-  }> = nodes.map((node, index) => {
+  const l2Status = statusById.get('l2_rca') ?? 'pending';
+  const l3Status = statusById.get('l3_rca') ?? 'pending';
+  const followupStatus: NodeStatus = statusById.get('db_fix') === 'completed' ? 'completed' : 'pending';
+
+  const config: DisplayNode[] = nodes.map((node, index) => {
     const id = node.id === 'security_guardrails' ? 'guardrails' : node.id;
     const status = statusById.get(id) ?? 'pending';
     return {
@@ -668,6 +705,12 @@ function buildDisplayNodes(
       accent: accentForNode(id),
       downstream: index < nodes.length - 1,
       approvalId: id === 'db_fix' ? latestApproval?.approval_id ?? selectedApproval?.approval_id ?? '' : '',
+      approvalStatus,
+      l2Status,
+      l3Status,
+      l2Metrics: metricsForNode('l2_rca', execution),
+      l3Metrics: metricsForNode('l3_rca', execution),
+      followupStatus,
     };
   });
 
@@ -678,15 +721,26 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
   if (id === 'connector') return ['Success Rate 99.8%', 'Time 1m 04s', 'Records 0'];
   if (id === 'normalizer') return ['Success Rate 99.7%', 'Time 1m 21s', 'Records 0'];
   if (id === 'guardrails') return guardrailMetrics(execution);
-  if (id === 'categorization') return ['Confidence 95.12%', 'Time 2m 05s', 'Route L2'];
-  if (id === 'l2_rca') return ['Confidence 92.45%', 'Time 3m 12s'];
-  if (id === 'l3_rca') return ['Confidence 97.00%', 'Time 0s'];
+  if (id === 'categorization') {
+    const confidence = percentMetric('Confidence', execution.categorisation.confidence);
+    const level = routeLevel(execution);
+    return [confidence, level ? `Route ${level}` : undefined, execution.categorisation.category ? `Category ${execution.categorisation.category}` : undefined].filter(Boolean) as string[];
+  }
+  if (id === 'l2_rca') {
+    const confidence = percentMetric('Confidence', execution.l2Response.confidence || execution.rca.confidence);
+    return [confidence, execution.rca.recommended_agent ? `Agent ${execution.rca.recommended_agent}` : undefined, execution.l2.status ? `Status ${execution.l2.status}` : undefined].filter(Boolean) as string[];
+  }
+  if (id === 'l3_rca') return routeLevel(execution) === 'L3' ? ['L3 route selected'] : ['Skipped'];
   if (id === 'fix_agent') return ['Waiting for approval', 'Remediation plan prepared'];
-  if (id === 'db_fix') return ['Issues Found 5', 'Actions Executed 5', 'Time 4m 35s'];
+  if (id === 'db_fix') {
+    const actions = execution.dbMetrics.actions_executed ?? execution.dbExecution.actions_executed;
+    const finalStatus = execution.dbExecution.overall_status || execution.dbVerification.status || execution.dbExecution.status;
+    const confidence = percentMetric('Confidence', execution.dbExecution.confidence);
+    return [actions !== undefined ? `Actions Executed ${actions}` : undefined, finalStatus ? `Status ${finalStatus}` : undefined, confidence].filter(Boolean) as string[];
+  }
   if (id === 'servicenow') return ['Success Rate 98.00%', 'Time 45s'];
   return ['Skipped'];
 }
-
 function guardrailMetrics(execution: ReturnType<typeof deriveExecution>) {
   const guardrails = asRecord(execution.response.guardrails);
   const checks = Array.isArray(guardrails.checks) ? guardrails.checks as Array<Record<string, unknown>> : [];
