@@ -93,7 +93,7 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
         {
             "id": "guardrails",
             "label": "AI Guardrails",
-            "service": "governance",
+            "service": "Security & Policy Validation",
             "endpoint": "internal:validate_guardrails",
         },
         {
@@ -300,3 +300,4 @@ async def root():
         "flow": "connector -> normalizer -> categorisation -> L1/L2/L3 route",
         "supported_sources": supported_sources(),
     }
+

@@ -629,8 +629,11 @@ function buildDisplayNodes(
   const hasExecution = Boolean(Object.keys(execution.response).length);
   statusById.set('connector', hasExecution ? 'completed' : 'pending');
   statusById.set('normalizer', hasExecution ? 'completed' : 'pending');
-  statusById.set('guardrails', hasExecution ? 'completed' : 'pending');
-  statusById.set('security_guardrails', hasExecution ? 'completed' : 'pending');
+  const guardrails = asRecord(execution.response.guardrails);
+  const hasGuardrailData = Boolean(Object.keys(guardrails).length);
+  const guardrailStatus: NodeStatus = hasGuardrailData ? (guardrails.allowed === false ? 'skipped' : 'completed') : 'pending';
+  statusById.set('guardrails', guardrailStatus);
+  statusById.set('security_guardrails', guardrailStatus);
   statusById.set('categorization', hasExecution ? 'completed' : 'pending');
   statusById.set('l2_rca', execution.l2.status === 'completed' ? 'running' : hasExecution ? 'completed' : 'pending');
   statusById.set('l3_rca', execution.response.status === 'codefix_waiting_for_approval' ? 'running' : 'skipped');
@@ -658,8 +661,8 @@ function buildDisplayNodes(
       id,
       index: index + 2,
       status,
-      title: id === 'guardrails' ? 'AI Guardrails' : node.label,
-      subtitle: id === 'guardrails' ? 'Security & Policy Validation' : node.service,
+      title: node.label,
+      subtitle: node.service,
       icon: iconForNode(id),
       metrics: metricsForNode(id, execution),
       accent: accentForNode(id),
@@ -674,12 +677,7 @@ function buildDisplayNodes(
 function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution>) {
   if (id === 'connector') return ['Success Rate 99.8%', 'Time 1m 04s', 'Records 0'];
   if (id === 'normalizer') return ['Success Rate 99.7%', 'Time 1m 21s', 'Records 0'];
-  if (id === 'guardrails') {
-    const guardrails = asRecord(execution.response.guardrails);
-    const checks = Array.isArray(guardrails.checks) ? guardrails.checks as Array<Record<string, unknown>> : [];
-    const policyPassed = checks.length ? checks.every((item) => item.passed !== false) : guardrails.allowed !== false;
-    return ['PII Scan Passed', `Policy Check ${policyPassed ? 'Passed' : 'Failed'}`, `Confidence ${String(guardrails.confidence || '96%')}`];
-  }
+  if (id === 'guardrails') return guardrailMetrics(execution);
   if (id === 'categorization') return ['Confidence 95.12%', 'Time 2m 05s', 'Route L2'];
   if (id === 'l2_rca') return ['Confidence 92.45%', 'Time 3m 12s'];
   if (id === 'l3_rca') return ['Confidence 97.00%', 'Time 0s'];
@@ -689,6 +687,28 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
   return ['Skipped'];
 }
 
+function guardrailMetrics(execution: ReturnType<typeof deriveExecution>) {
+  const guardrails = asRecord(execution.response.guardrails);
+  const checks = Array.isArray(guardrails.checks) ? guardrails.checks as Array<Record<string, unknown>> : [];
+  const metrics = checks.slice(0, 2).map((check) => {
+    const label = String(check.display_label || check.name || '').replace(/_/g, ' ').trim();
+    const status = String(check.status || (check.passed === false ? 'Failed' : 'Passed'));
+    return `${label} ${status}`.trim();
+  }).filter(Boolean);
+
+  if (typeof guardrails.confidence === 'number') {
+    metrics.push(`Confidence ${Math.round(guardrails.confidence * 100)}%`);
+  }
+
+  if (!metrics.length && Object.keys(guardrails).length) {
+    const totalChecks = Number(guardrails.total_checks || 0);
+    const passedChecks = Number(guardrails.passed_checks || 0);
+    if (totalChecks > 0) metrics.push(`Checks ${passedChecks}/${totalChecks}`);
+    if (guardrails.risk_level) metrics.push(`Risk ${String(guardrails.risk_level)}`);
+  }
+
+  return metrics.length ? metrics : ['Waiting for backend guardrail result'];
+}
 function accentForNode(id: string) {
   if (id === 'guardrails' || id === 'servicenow') return 'green';
   if (id === 'l2_rca' || id === 'connector') return 'blue';
@@ -706,3 +726,4 @@ function iconForNode(id: string) {
   if (id === 'github') return <CodeOutlinedIcon />;
   return <HourglassTopIcon />;
 }
+
