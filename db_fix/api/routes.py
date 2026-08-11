@@ -2,10 +2,13 @@ import traceback
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from db_fix.agents.db_fix_agent import DBFixAgent
 from db_fix.models.request import RCARequest
 from db_fix.utils.logger import logger
+from governance.approvals import approval_store
+from governance.telemetry import emit_governance_event
 
 
 router = APIRouter(
@@ -15,6 +18,24 @@ router = APIRouter(
 
 health_router = APIRouter(tags=["Health"])
 agent = DBFixAgent()
+
+
+class ApprovalDecision(BaseModel):
+    approver: str
+    reason: str = ""
+
+
+def _execute_db_fix_plan(plan) -> dict:
+    request_payload = plan.execution_context.get("request", {})
+    request = RCARequest(**request_payload)
+    return agent.execute(
+        request,
+        request_id=plan.execution_context.get("request_id"),
+        require_approval=False,
+    )
+
+
+approval_store.register_executor("db_fix", _execute_db_fix_plan)
 
 
 @health_router.get("/health")
@@ -36,10 +57,62 @@ def execute(request: RCARequest, http_request: Request):
         return JSONResponse(
             status_code=500,
             content={
-                "ticket_id":  request.ticket_id,
+                "ticket_id": request.ticket_id,
                 "request_id": request_id,
-                "status":     "FAILED",
-                "error":      type(e).__name__,
-                "message":    str(e),
-            }
+                "status": "FAILED",
+                "error": type(e).__name__,
+                "message": str(e),
+            },
         )
+
+
+@router.get("/remediations")
+def list_remediation_plans(status: str | None = None):
+    return {
+        "status": "ok",
+        "plans": [plan.model_dump() for plan in approval_store.list(status=status)],
+    }
+
+
+@router.get("/remediations/{approval_id}")
+def get_remediation_plan(approval_id: str):
+    plan = approval_store.get(approval_id)
+    if plan is None:
+        return JSONResponse(status_code=404, content={"status": "not_found", "approval_id": approval_id})
+    return {"status": "ok", "remediation_plan": plan.model_dump()}
+
+
+@router.post("/remediations/{approval_id}/approve")
+def approve_remediation(approval_id: str, decision: ApprovalDecision):
+    try:
+        plan = approval_store.approve_and_execute(
+            approval_id,
+            approver=decision.approver,
+            reason=decision.reason,
+        )
+        return {"status": plan.status, "remediation_plan": plan.model_dump()}
+    except KeyError:
+        return JSONResponse(status_code=404, content={"status": "not_found", "approval_id": approval_id})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "failed", "approval_id": approval_id, "message": str(e)})
+
+
+@router.post("/remediations/{approval_id}/reject")
+def reject_remediation(approval_id: str, decision: ApprovalDecision):
+    try:
+        plan = approval_store.reject(
+            approval_id,
+            approver=decision.approver,
+            reason=decision.reason,
+        )
+        emit_governance_event(
+            "originating_platform.update_requested",
+            approval_id=approval_id,
+            source_platform=plan.source_platform,
+            issue_id=plan.issue_id,
+            status="MANUAL_INTERVENTION_REQUIRED",
+            reason=decision.reason,
+        )
+        return {"status": plan.status, "remediation_plan": plan.model_dump()}
+    except KeyError:
+        return JSONResponse(status_code=404, content={"status": "not_found", "approval_id": approval_id})

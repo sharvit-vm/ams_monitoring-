@@ -23,6 +23,7 @@ from storage.rca_report_store import save_rca_report
 from l2_rca.agents.l2_rca_agent import L2RCAAgent
 from l2_rca.models.request import IncidentRequest as L2IncidentRequest
 from db_fix.models.request import RCARequest as DBFixRequest
+from governance.guardrails import validate_guardrails
 from workflows.agent_registry import get_fix_agent
 
 
@@ -46,6 +47,7 @@ class IntakeCategorisationState(TypedDict, total=False):
     headers: dict[str, str]
     source_event: SourceEvent
     error_event: ErrorEvent
+    guardrails: dict[str, Any]
     categorisation: dict[str, Any]
     knowledge_id: str
     repo_dir: str
@@ -445,6 +447,36 @@ def build_intake_categorisation_workflow():
         )
         return {**state, "categorisation": result_payload, "status": "categorised"}
 
+    def guardrails_node(state: IntakeCategorisationState) -> IntakeCategorisationState:
+        event = state["error_event"]
+        log_graph_stage(7, "security_guardrails_started", "running", event=event.id)
+        decision = validate_guardrails(
+            source=state["source"],
+            headers=state.get("headers", {}),
+            payload=state.get("payload", {}),
+            payload_bytes=state.get("payload_bytes", b""),
+            event=event,
+        )
+        status = "guardrails_passed" if decision.allowed else "guardrails_blocked"
+        log_graph_stage(
+            8,
+            "security_guardrails_completed",
+            "completed" if decision.allowed else "blocked",
+            event=event.id,
+            allowed=decision.allowed,
+            risk_level=decision.risk_level,
+            reason=decision.reason,
+        )
+        response = None
+        if not decision.allowed:
+            response = {
+                "status": status,
+                "event_id": event.id,
+                "guardrails": decision.to_dict(),
+                "requires_manual_intervention": True,
+            }
+        return {**state, "guardrails": decision.to_dict(), "status": status, **({"response": response} if response else {})}
+
     def l1_placeholder_node(state: IntakeCategorisationState) -> IntakeCategorisationState:
         event = state["error_event"]
         result_dict = {
@@ -578,7 +610,11 @@ def build_intake_categorisation_workflow():
                 print(f"[graph] Code fix error: {fix_result.error}")
             if fix_result.pr_url:
                 print(f"[graph] PR opened: {fix_result.pr_url}")
-            status = "codefix_completed" if fix_result.success else "codefix_failed"
+            status = (
+                "codefix_waiting_for_approval"
+                if getattr(fix_result, "status", "") == "WAITING_FOR_APPROVAL"
+                else "codefix_completed" if fix_result.success else "codefix_failed"
+            )
             return {**state, "codefix_result": fix_result, "status": status}
         except Exception as exc:
             print(f"[graph] Code fix failed; error={exc}")
@@ -595,6 +631,7 @@ def build_intake_categorisation_workflow():
             "event_id": event.id if event else None,
             "normalised_event": normalised_event_log_payload(event) if event else None,
             "categorisation": state.get("categorisation"),
+            "guardrails": state.get("guardrails"),
             "l1": state.get("l1_result"),
             "l2_rca": state.get("l2_rca_result"),
             "fix_agent": state.get("fix_agent_result"),
@@ -606,7 +643,10 @@ def build_intake_categorisation_workflow():
         return {**state, "response": response}
 
     def route_after_normalizer(state: IntakeCategorisationState) -> str:
-        return "categorisation" if state.get("error_event") else "build_response"
+        return "guardrails" if state.get("error_event") else "build_response"
+
+    def route_after_guardrails(state: IntakeCategorisationState) -> str:
+        return "categorisation" if state.get("guardrails", {}).get("allowed") else "build_response"
 
     def route_after_categorisation(state: IntakeCategorisationState) -> str:
         categorisation = state.get("categorisation", {})
@@ -644,6 +684,7 @@ def build_intake_categorisation_workflow():
 
     graph.add_node("connector", connector_node)
     graph.add_node("normalizer", normalizer_node)
+    graph.add_node("guardrails", guardrails_node)
     graph.add_node("categorisation", categorisation_node)
     graph.add_node("l1_placeholder", l1_placeholder_node)
     graph.add_node("l2_rca", l2_rca_node)
@@ -659,6 +700,11 @@ def build_intake_categorisation_workflow():
     graph.add_conditional_edges(
         "normalizer",
         route_after_normalizer,
+        {"guardrails": "guardrails", "build_response": "build_response"},
+    )
+    graph.add_conditional_edges(
+        "guardrails",
+        route_after_guardrails,
         {"categorisation": "categorisation", "build_response": "build_response"},
     )
     graph.add_conditional_edges(

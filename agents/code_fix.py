@@ -34,6 +34,8 @@ from agents.skill_loader import build_skill_prompt
 from tools.file_tool import read_file, read_file_range, write_fix, get_token_count, reset_tool_context, set_tool_context
 from tools.neo4j_tool import get_connected_files, get_function_calls, get_file_summary
 from observability.agent_trace import log_agent_event, make_evidence_record, trace_span
+from governance.approvals import RemediationPlan, approval_store
+from governance.telemetry import emit_governance_event
 
 
 CLONE_DIR    = os.getenv("CLONE_DIR", "clone")
@@ -44,6 +46,9 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
 class CodeFixResult(BaseModel):
     success: bool
+    status: str = ""
+    approval_id: Optional[str] = None
+    remediation_plan: Optional[dict] = None
     pr_url: Optional[str] = None
     pr_number: Optional[int] = None
     branch_name: str = ""
@@ -292,7 +297,13 @@ If you could not safely apply a patch, output ONLY this JSON:
 No extra text before or after the JSON."""
 
 
-def run_code_fix(event: ErrorEvent, rca: RCAResult, knowledge_id: str, repo_dir: str = CLONE_DIR) -> CodeFixResult:
+def run_code_fix(
+    event: ErrorEvent,
+    rca: RCAResult,
+    knowledge_id: str,
+    repo_dir: str = CLONE_DIR,
+    require_approval: bool = True,
+) -> CodeFixResult:
     started_at = time.perf_counter()
     incident_id = event.incident_id or event.external_id or ""
     rca_confidence = getattr(rca, "confidence", "")
@@ -339,7 +350,6 @@ def run_code_fix(event: ErrorEvent, rca: RCAResult, knowledge_id: str, repo_dir:
             branch_name="",
         )
 
-    # Step 1 - Create fix branch
     if str(rca_confidence).lower() == "low":
         verification_records.append(make_evidence_record(
             evidence_id="fix_ev_001",
@@ -365,6 +375,58 @@ def run_code_fix(event: ErrorEvent, rca: RCAResult, knowledge_id: str, repo_dir:
             verification_summary="Blocked by low-confidence RCA policy.",
             verification_records=verification_records,
         )
+
+    if require_approval:
+        confidence_map = {"low": 0.25, "medium": 0.65, "high": 0.9}
+        confidence_score = confidence_map.get(str(rca_confidence).lower(), 0.5)
+        plan = approval_store.create(RemediationPlan(
+            agent_type="code_fix",
+            target_type="code_repository",
+            source_platform=(event.source or "").replace("_issue", "") or "github",
+            issue_id=event.incident_id or event.external_id or event.id,
+            issue_summary=f"{event.error_type}: {event.message}",
+            severity=str(event.priority or "medium"),
+            confidence=confidence_score,
+            recommended_action=rca.fix_suggestion or f"Patch {rca.buggy_file}",
+            expected_impact=f"Create a fix branch and pull request touching {rca.buggy_file}.",
+            estimated_execution_time="3-5 minutes",
+            risk_level="medium" if confidence_score >= 0.65 else "high",
+            evidence=[
+                {"type": "traceback", "value": event.traceback},
+                {"type": "root_cause", "value": rca.root_cause},
+                {"type": "buggy_file", "value": rca.buggy_file},
+                {"type": "buggy_lines", "value": rca.buggy_lines},
+                {"type": "affected_files", "value": rca.affected_files},
+            ],
+            plan=[
+                {"step": "prepare_branch", "target": event.repo_full_name},
+                {"step": "generate_patch", "target": rca.buggy_file},
+                {"step": "verify_diff", "target": repo_dir},
+                {"step": "push_branch_and_open_pr", "target": event.repo_full_name},
+            ],
+            execution_context={
+                "event": event.model_dump(mode="json"),
+                "rca": rca.model_dump() if hasattr(rca, "model_dump") else dict(rca),
+                "knowledge_id": knowledge_id,
+                "repo_dir": repo_dir,
+            },
+        ))
+        emit_governance_event(
+            "remediation.waiting_for_approval",
+            approval_id=plan.approval_id,
+            agent_type="code_fix",
+            issue_id=plan.issue_id,
+        )
+        return CodeFixResult(
+            success=False,
+            status="WAITING_FOR_APPROVAL",
+            approval_id=plan.approval_id,
+            remediation_plan=plan.model_dump(),
+            confidence=rca_confidence,
+            verification_summary="Code remediation plan is waiting for human approval.",
+        )
+
+    # Step 1 - Create fix branch
 
     try:
         branch_name = _prepare_fix_branch(event.id, repo_dir)
@@ -649,6 +711,23 @@ Apply the fix and return your JSON summary.
             verification_summary="Branch was pushed but PR creation failed.",
             verification_records=verification_records,
         )
+
+
+def _execute_code_fix_plan(plan: RemediationPlan) -> dict:
+    context = plan.execution_context
+    event = ErrorEvent(**context["event"])
+    rca = RCAResult(**context["rca"])
+    result = run_code_fix(
+        event,
+        rca,
+        context["knowledge_id"],
+        repo_dir=context.get("repo_dir", CLONE_DIR),
+        require_approval=False,
+    )
+    return result.model_dump()
+
+
+approval_store.register_executor("code_fix", _execute_code_fix_plan)
 
 
 # -- Dev test ------------------------------------------------------------------

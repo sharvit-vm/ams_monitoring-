@@ -22,6 +22,8 @@ from workflows.intake_categorisation_workflow import (  # noqa: E402
     run_intake_categorisation_workflow,
     supported_sources,
 )
+from db_fix.api.routes import router as db_fix_router  # noqa: E402
+from governance.approvals import approval_store  # noqa: E402
 
 
 app = FastAPI(title="AMS Monitoring Incident Gateway")
@@ -33,11 +35,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(db_fix_router)
+
+
+NOTIFICATION_CHANNELS = {
+    "servicenow": {
+        "id": "servicenow",
+        "label": "ServiceNow Notification",
+        "service": "external",
+        "endpoint": "incident notification",
+    },
+    "jira": {
+        "id": "jira",
+        "label": "Jira Notification",
+        "service": "external",
+        "endpoint": "incident notification",
+    },
+    "github": {
+        "id": "github",
+        "label": "GitHub Notification",
+        "service": "external",
+        "endpoint": "incident notification",
+    },
+}
+
+
+def notification_channel_for_source(source: str | None) -> str:
+    source_key = (source or "").lower().strip().replace("_issue", "")
+    if source_key in {"jira"}:
+        return "jira"
+    if source_key in {"github"}:
+        return "github"
+    return "servicenow"
 
 
 def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
     sn_instance = os.getenv("SN_INSTANCE")
-    return [
+    jira_instance = (
+        os.getenv("JIRA_INSTANCE")
+        or os.getenv("JIRA_BASE_URL")
+        or os.getenv("JIRA_URL")
+    )
+    github_instance = os.getenv("GITHUB_REPOSITORY_URL") or os.getenv("GITHUB_URL")
+    nodes = [
         {
             "id": "connector",
             "label": "Connector",
@@ -51,8 +91,14 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
             "endpoint": "internal:normalise_source_event",
         },
         {
+            "id": "guardrails",
+            "label": "AI Guardrails",
+            "service": "governance",
+            "endpoint": "internal:validate_guardrails",
+        },
+        {
             "id": "categorization",
-            "label": "Categorisation Agent",
+            "label": "Categorization Agent",
             "service": "categorization_layer",
             "endpoint": "internal:categorise_error_event",
         },
@@ -61,6 +107,12 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
             "label": "L2 RCA Agent",
             "service": "l2_rca",
             "endpoint": "in-process",
+        },
+        {
+            "id": "human_approval",
+            "label": "Human Approval",
+            "service": "governance",
+            "endpoint": "manual approval gate",
         },
         {
             "id": "l1_placeholder",
@@ -87,14 +139,22 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
             "endpoint": "in-process",
         },
         {
-            "id": "servicenow",
-            "label": "ServiceNow Notification",
-            "service": "external",
-            "endpoint": "incident notification",
+            **NOTIFICATION_CHANNELS["servicenow"],
             "configured_url": bool(sn_instance),
             "instance_url": sn_instance,
         },
+        {
+            **NOTIFICATION_CHANNELS["jira"],
+            "configured_url": bool(jira_instance),
+            "instance_url": jira_instance,
+        },
+        {
+            **NOTIFICATION_CHANNELS["github"],
+            "configured_url": bool(github_instance),
+            "instance_url": github_instance,
+        },
     ]
+    return nodes
 
 
 def _dashboard_source_platforms() -> list[dict[str, Any]]:
@@ -104,6 +164,7 @@ def _dashboard_source_platforms() -> list[dict[str, Any]]:
         or os.getenv("JIRA_BASE_URL")
         or os.getenv("JIRA_URL")
     )
+    github_instance = os.getenv("GITHUB_REPOSITORY_URL") or os.getenv("GITHUB_URL")
     platforms = [
         {
             "id": "servicenow",
@@ -118,6 +179,13 @@ def _dashboard_source_platforms() -> list[dict[str, Any]]:
             "source": "jira",
             "instance_url": jira_instance,
             "configured_url": bool(jira_instance),
+        },
+        {
+            "id": "github",
+            "label": "GitHub",
+            "source": "github",
+            "instance_url": github_instance,
+            "configured_url": bool(github_instance),
         },
     ]
     supported = set(supported_sources())
@@ -190,13 +258,17 @@ async def dashboard_workflow():
         "nodes": _dashboard_workflow_nodes(),
         "edges": [
             {"source": "connector", "target": "normalizer"},
-            {"source": "normalizer", "target": "categorization"},
+            {"source": "normalizer", "target": "guardrails"},
+            {"source": "guardrails", "target": "categorization", "condition": "guardrails.allowed == true"},
             {"source": "categorization", "target": "l1_placeholder", "condition": "support_level == L1"},
             {"source": "categorization", "target": "l2_rca", "condition": "support_level == L2"},
             {"source": "categorization", "target": "l3_rca", "condition": "support_level == L3"},
-            {"source": "l2_rca", "target": "db_fix", "condition": "recommended_agent == db_fix_agent"},
+            {"source": "l2_rca", "target": "human_approval", "condition": "recommended_agent == db_fix_agent"},
+            {"source": "human_approval", "target": "db_fix", "condition": "approval == approved"},
             {"source": "l3_rca", "target": "codefix", "condition": "confidence != low"},
-            {"source": "db_fix", "target": "servicenow", "condition": "notification enabled"},
+            {"source": "build_response", "target": "servicenow", "condition": "source == servicenow"},
+            {"source": "build_response", "target": "jira", "condition": "source == jira"},
+            {"source": "build_response", "target": "github", "condition": "source == github"},
         ],
         "supported_sources": supported_sources(),
         "source_platforms": _dashboard_source_platforms(),
@@ -209,6 +281,15 @@ async def dashboard_latest_execution():
     if execution is None:
         return {"status": "empty", "message": "No executions recorded yet."}
     return {"status": "ok", "execution": execution}
+
+
+@app.get("/dashboard/approvals/pending")
+async def dashboard_pending_approvals():
+    plans = approval_store.list(status="WAITING_FOR_APPROVAL")
+    return {
+        "status": "ok",
+        "approvals": [plan.model_dump() for plan in plans],
+    }
 
 
 @app.get("/")

@@ -53,6 +53,8 @@ from db_fix.telemetry.structured_logger import (
 )
 from db_fix.telemetry.explainability  import build_issue_explanation
 from db_fix.telemetry.execution_logger import build_timeline, log_pipeline_summary
+from governance.approvals import RemediationPlan, approval_store
+from governance.telemetry import emit_governance_event
 
 
 class DBFixAgent:
@@ -69,7 +71,7 @@ class DBFixAgent:
         self.explanation_service  = ExplanationService()
 
     # ─────────────────────────────────────────────────────────────────────────
-    def execute(self, request: RCARequest, request_id: Optional[str] = None) -> dict:
+    def execute(self, request: RCARequest, request_id: Optional[str] = None, require_approval: bool = True) -> dict:
         # ── Initialise trace context and metrics ──────────────────────────────
         trace   = new_trace(
             ticket_id=request.ticket_id,
@@ -251,6 +253,50 @@ class DBFixAgent:
             )
 
             # ══════════════════════════════════════════════════════════════════
+            if require_approval:
+                confidence = float(request.confidence or 0.0)
+                plan = approval_store.create(RemediationPlan(
+                    agent_type="db_fix",
+                    target_type="database",
+                    source_platform="servicenow",
+                    issue_id=request.ticket_id,
+                    issue_summary=request.reason or f"{request.problem_domain} issue for {request.application}",
+                    severity="high" if request.status.upper() in {"CRITICAL", "P1", "P2"} else "medium",
+                    confidence=confidence,
+                    recommended_action=", ".join(a.get("action", "") for a in actions) or "No automated DB action identified",
+                    expected_impact=f"Apply {len(actions)} database remediation action(s) for {request.application}.",
+                    estimated_execution_time=f"{max(1, len(actions) * 2)} minutes",
+                    risk_level="high" if any(a.get("automated") for a in actions) else "medium",
+                    evidence=[
+                        {"type": "cmdb_application", "value": application},
+                        {"type": "database", "value": database},
+                        {"type": "health", "value": health},
+                        {"type": "diagnosis", "value": issues},
+                    ],
+                    plan=actions,
+                    execution_context={"request": request.model_dump(), "request_id": request_id},
+                ))
+                emit_governance_event(
+                    "remediation.waiting_for_approval",
+                    approval_id=plan.approval_id,
+                    agent_type="db_fix",
+                    issue_id=request.ticket_id,
+                    trace_id=trace.trace_id,
+                )
+                return {
+                    "trace_id": trace.trace_id,
+                    "ticket_id": request.ticket_id,
+                    "correlation_id": trace.correlation_id,
+                    "request_id": trace.request_id,
+                    "agent": "DB Fix Agent",
+                    "timestamp": timestamp,
+                    "status": "WAITING_FOR_APPROVAL",
+                    "approval_id": plan.approval_id,
+                    "remediation_plan": plan.model_dump(),
+                    "database": database["name"],
+                    "issues_found": issues,
+                    "actions": actions,
+                }
             # STEP 07 — Execute Remediation
             # ══════════════════════════════════════════════════════════════════
             current_step = "EXECUTE_REMEDIATION"
