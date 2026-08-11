@@ -405,7 +405,7 @@ button, input, textarea {
 }
 
 .workflow-card.compact {
-  min-height: 84px;
+  min-height: 106px;
 }
 
 .workflow-card.clickable {
@@ -500,16 +500,19 @@ button, input, textarea {
   margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 14px;
   color: #374151;
   font-size: 12px;
 }
 
-.workflow-card-metrics span {
+.metric-item {
   position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
 }
 
-.workflow-card-metrics span + span::before {
+.metric-item + .metric-item::before {
   content: "";
   position: absolute;
   left: -7px;
@@ -518,6 +521,16 @@ button, input, textarea {
   height: 14px;
   background: #d1d5db;
   transform: translateY(-50%);
+}
+
+.metric-key {
+  color: #8b95a1;
+  font-weight: 700;
+}
+
+.metric-value {
+  color: #374151;
+  font-weight: 600;
 }
 
 .status-pill {
@@ -624,6 +637,10 @@ button, input, textarea {
   padding: 12px 16px;
 }
 
+.approval-metrics {
+  margin-top: 10px;
+}
+
 .approval-gate-icon {
   width: 32px;
   height: 32px;
@@ -652,60 +669,58 @@ button, input, textarea {
 }
 
 .branch-card.skipped .workflow-card {
-  opacity: 0.88;
+  opacity: 1;
+  background: #f5f6f8;
+  border-color: #d7dbe2;
+  box-shadow: none;
+}
+
+.branch-card.skipped .workflow-card-icon,
+.branch-card.skipped .workflow-card-title,
+.branch-card.skipped .workflow-card-subtitle,
+.branch-card.skipped .metric-key,
+.branch-card.skipped .metric-value {
+  color: #8a94a3 !important;
+}
+
+.branch-card.skipped .branch-tag {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #6b7280;
 }
 
 .notification-row {
   display: none;
 }
 
-.bottom-arrow-column {
-  width: min(560px, calc(100vw - 36px));
-  display: grid;
-  justify-items: center;
-  gap: 0;
-  margin-top: 2px;
-}
-
-.bottom-arrow {
-  width: 2px;
-  height: 18px;
-  background: #cfd5de;
-  position: relative;
-}
-
-.bottom-arrow::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -4px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid #cfd5de;
-  border-bottom: 2px solid #cfd5de;
-  transform: translateX(-50%) rotate(45deg);
-}
-
 .bottom-notifications {
   width: min(1120px, 100%);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
-  align-items: start;
-  margin-top: 4px;
-}
-
-.notification-branches {
-  display: grid;
-  gap: 14px;
-}
-
-.bottom-notifications .workflow-card:first-child {
-  width: 100%;
+  align-items: stretch;
+  margin-top: 0;
 }
 
 .bottom-notifications .workflow-card {
   width: 100%;
+  min-height: 132px;
+  grid-template-columns: 42px 1fr;
+  align-items: start;
+}
+
+.bottom-notifications .workflow-card.skipped {
+  background: #f7f8fa;
+  border-color: #d9dde5;
+  box-shadow: none;
+}
+
+.bottom-notifications .workflow-card.skipped .workflow-card-icon,
+.bottom-notifications .workflow-card.skipped .workflow-card-title,
+.bottom-notifications .workflow-card.skipped .workflow-card-subtitle,
+.bottom-notifications .workflow-card.skipped .metric-key,
+.bottom-notifications .workflow-card.skipped .metric-value {
+  color: #818b98 !important;
 }
 
 .approval-title {

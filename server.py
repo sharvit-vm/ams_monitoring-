@@ -98,13 +98,13 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
         },
         {
             "id": "categorization",
-            "label": "Categorization Agent",
+            "label": "Categorization",
             "service": "categorization_layer",
             "endpoint": "internal:categorise_error_event",
         },
         {
             "id": "l2_rca",
-            "label": "L2 RCA Agent",
+            "label": "L2 RCA",
             "service": "l2_rca",
             "endpoint": "in-process",
         },
@@ -122,7 +122,7 @@ def _dashboard_workflow_nodes() -> list[dict[str, Any]]:
         },
         {
             "id": "l3_rca",
-            "label": "L3 RCA Agent",
+            "label": "L3 RCA",
             "service": "agents.l3_rca",
             "endpoint": "in-process",
         },
@@ -190,6 +190,82 @@ def _dashboard_source_platforms() -> list[dict[str, Any]]:
     ]
     supported = set(supported_sources())
     return [platform for platform in platforms if platform["source"] in supported]
+
+
+def _nested_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _status_complete(value: Any) -> bool:
+    return str(value or "").strip().upper() in {
+        "COMPLETED",
+        "SUCCESS",
+        "SUCCEEDED",
+        "SUCCESSFUL",
+        "EXECUTED",
+        "DONE",
+        "RESOLVED",
+        "HEALTHY",
+        "PASSED",
+        "L1_PLACEHOLDER_COMPLETED",
+    }
+
+
+def _confidence_percent(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return round(value * 100) if value <= 1 else round(value)
+    return None
+
+
+def _duration_ms(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _dashboard_execution_summary(execution: dict[str, Any]) -> dict[str, Any]:
+    response = _nested_dict(execution.get("response"))
+    metrics = _nested_dict(response.get("metrics"))
+    categorisation = _nested_dict(response.get("categorization") or response.get("categorisation"))
+    l2_response = _nested_dict(response.get("l2_response") or response.get("l2Rca") or response.get("l2"))
+    db_execution = _nested_dict(response.get("db_execution") or response.get("db_fix") or response.get("remediation"))
+    db_metrics = _nested_dict(db_execution.get("metrics"))
+
+    total_steps = len([
+        node for node in _dashboard_workflow_nodes()
+        if node["id"] not in {"l1_placeholder", "codefix"}
+    ])
+    completed = 0
+    completed += 1 if _status_complete(response.get("status")) else 0
+    completed += 1 if _nested_dict(response.get("normalised") or response.get("normalized") or response.get("event")) else 0
+    completed += 1 if _nested_dict(response.get("guardrails")) else 0
+    completed += 1 if categorisation else 0
+    completed += 1 if _status_complete(db_execution.get("status") or db_execution.get("overall_status")) else 0
+
+    confidence_candidates = [
+        _confidence_percent(response.get("overall_confidence")),
+        _confidence_percent(categorisation.get("confidence")),
+        _confidence_percent(l2_response.get("confidence")),
+        _confidence_percent(db_execution.get("confidence")),
+    ]
+    overall_confidence = next((value for value in confidence_candidates if value is not None), None)
+
+    duration_candidates = [
+        _duration_ms(metrics.get("total_duration_ms")),
+        _duration_ms(metrics.get("duration_ms")),
+        _duration_ms(db_metrics.get("total_duration_ms")),
+        _duration_ms(_nested_dict(db_metrics.get("stage_durations_ms")).get("total")),
+    ]
+    workflow_time_ms = next((value for value in duration_candidates if value is not None), None)
+
+    return {
+        "total_steps": total_steps,
+        "completed": completed,
+        "overall_confidence": overall_confidence,
+        "workflow_time_ms": workflow_time_ms,
+    }
 
 
 async def _run_gateway(source: str, request: Request, *, include_raw_body: bool = False):
@@ -279,8 +355,12 @@ async def dashboard_workflow():
 async def dashboard_latest_execution():
     execution = latest_execution()
     if execution is None:
-        return {"status": "empty", "message": "No executions recorded yet."}
-    return {"status": "ok", "execution": execution}
+        return {"status": "empty", "message": "No executions recorded yet.", "summary": None}
+    return {
+        "status": "ok",
+        "execution": execution,
+        "summary": _dashboard_execution_summary(execution),
+    }
 
 
 @app.get("/dashboard/approvals/pending")

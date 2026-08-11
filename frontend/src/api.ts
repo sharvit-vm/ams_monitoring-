@@ -47,6 +47,8 @@ export type SourcePlatform = {
   source: string;
   configured_url?: boolean;
   instance_url?: string;
+  project_url?: string;
+  repo_url?: string;
 };
 
 export type WorkflowResponse = {
@@ -64,6 +66,12 @@ export type PendingApprovalsResponse = {
 export type LatestExecutionResponse = {
   status: 'ok' | 'empty';
   message?: string;
+  summary?: {
+    total_steps?: number | null;
+    completed?: number | null;
+    overall_confidence?: number | null;
+    workflow_time_ms?: number | null;
+  } | null;
   execution?: {
     id: string;
     recorded_at: string;
