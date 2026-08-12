@@ -125,6 +125,53 @@ def _changed_files(repo_dir: str) -> list[str]:
     return [f for f in diff_out.splitlines() if f]
 
 
+def _normalize_repo_path(path: str | None) -> str:
+    return (path or "").replace("\\", "/").strip().lstrip("./")
+
+
+def _allowed_fix_files(rca: RCAResult) -> set[str]:
+    # Automatic codefix is intentionally constrained to the primary RCA file.
+    # Related/affected files are evidence for reasoning, not automatic edit targets.
+    buggy_file = _normalize_repo_path(getattr(rca, "buggy_file", ""))
+    return {buggy_file} if buggy_file else set()
+
+
+def _validate_patch_scope(
+    rca: RCAResult,
+    changed_files: list[str],
+    agent_files_changed: list[str] | None = None,
+) -> tuple[bool, str, list[str]]:
+    allowed_files = _allowed_fix_files(rca)
+    normalized_changed = [_normalize_repo_path(path) for path in changed_files if _normalize_repo_path(path)]
+    normalized_agent_files = [_normalize_repo_path(path) for path in (agent_files_changed or []) if _normalize_repo_path(path)]
+
+    if not allowed_files:
+        return False, "RCA did not provide a buggy_file, so no safe automatic edit target exists.", sorted(allowed_files)
+    if not normalized_changed:
+        return False, "No files were changed by the patch agent.", sorted(allowed_files)
+
+    changed_set = set(normalized_changed)
+    unexpected = sorted(changed_set - allowed_files)
+    missing_required = sorted(allowed_files - changed_set)
+    if unexpected:
+        return False, f"Patch touched files outside RCA boundary: {', '.join(unexpected)}.", sorted(allowed_files)
+    if missing_required:
+        return False, f"Patch did not modify the RCA buggy_file: {', '.join(missing_required)}.", sorted(allowed_files)
+
+    if normalized_agent_files:
+        agent_set = set(normalized_agent_files)
+        if agent_set != changed_set:
+            return False, "Patch summary files_changed does not match the actual git diff.", sorted(allowed_files)
+
+    return True, "Patch scope matches RCA buggy_file boundary.", sorted(allowed_files)
+
+
+def _discard_worktree_changes(repo_dir: str) -> None:
+    rc, _, _ = _git(["restore", "."], cwd=repo_dir)
+    if rc != 0:
+        _git(["checkout", "--", "."], cwd=repo_dir)
+
+
 def _open_pr(repo_full_name, branch_name, base_branch, event, rca, changed_files):
     g = Github(GITHUB_TOKEN)
     repo = g.get_repo(repo_full_name)
@@ -279,6 +326,8 @@ Rules:
 - Make the SMALLEST possible change that fixes the bug
 - Do NOT refactor beyond the fix
 - Preserve all indentation and style exactly
+- You may only call write_fix for the strict Allowed edit files listed in the user message
+- Do not patch caller/controller/related files unless they are explicitly listed as allowed edit files
 
 After calling write_fix, output ONLY this JSON:
 {{
@@ -307,6 +356,7 @@ def run_code_fix(
     started_at = time.perf_counter()
     incident_id = event.incident_id or event.external_id or ""
     rca_confidence = getattr(rca, "confidence", "")
+    allowed_files = sorted(_allowed_fix_files(rca))
     verification_records: list[dict] = []
 
     log_agent_event(
@@ -397,6 +447,7 @@ def run_code_fix(
                 {"type": "buggy_file", "value": rca.buggy_file},
                 {"type": "buggy_lines", "value": rca.buggy_lines},
                 {"type": "affected_files", "value": rca.affected_files},
+                {"type": "allowed_edit_files", "value": allowed_files},
             ],
             plan=[
                 {"step": "prepare_branch", "target": event.repo_full_name},
@@ -464,6 +515,26 @@ def run_code_fix(
             verification_records=verification_records,
         )
 
+    pre_existing_changes = _changed_files(repo_dir)
+    if pre_existing_changes:
+        log_agent_event(
+            agent="codefix",
+            stage="precheck",
+            status="blocked",
+            event_id=event.id,
+            incident_id=incident_id,
+            summary="Repository checkout has pre-existing uncommitted changes; refusing to generate an automated patch.",
+            changed_files=pre_existing_changes,
+        )
+        return CodeFixResult(
+            success=False,
+            error="Repository checkout is dirty before codefix; automatic patch skipped.",
+            branch_name=branch_name,
+            confidence=rca_confidence,
+            verification_summary="Blocked because checkout had pre-existing uncommitted changes.",
+            verification_records=verification_records,
+        )
+
     # Step 2 - Run the code fix agent
     agent = create_agent(
         model=agent_llm,
@@ -490,13 +561,15 @@ RCA Result:
   Buggy function: {rca.buggy_function}
   Buggy lines   : {rca.buggy_lines}
   Affected files: {rca.affected_files}
+  Allowed edit files STRICT: {allowed_files}
   Fix suggestion: {rca.fix_suggestion}
   Confidence    : {rca.confidence}
 
-Apply the fix and return your JSON summary.
+Apply the fix and return your JSON summary. If the safest edit seems to be outside Allowed edit files, do not patch; return files_changed as an empty list with the blocker in patch_summary.
 """
 
     patch_summary = ""
+    agent_output: dict = {}
     try:
         log_agent_event(
             agent="codefix",
@@ -538,6 +611,14 @@ Apply the fix and return your JSON summary.
 
         agent_output = json.loads(clean)
         patch_summary = agent_output.get("patch_summary", "Code fix applied")
+        agent_files_changed = agent_output.get("files_changed") or []
+        if not isinstance(agent_files_changed, list):
+            raise ValueError("Patch summary files_changed must be a list")
+        if not agent_files_changed:
+            raise ValueError(patch_summary or "Patch agent did not apply a safe edit")
+        scope_ok, scope_reason, scope_allowed = _validate_patch_scope(rca, _changed_files(repo_dir), agent_files_changed)
+        if not scope_ok:
+            raise ValueError(f"Unsafe patch scope: {scope_reason} Allowed files: {scope_allowed}")
         verification_records.append(make_evidence_record(
             evidence_id="fix_ev_002",
             evidence_type="patch",
@@ -563,44 +644,84 @@ Apply the fix and return your JSON summary.
         )
 
     except Exception as e:
-        patch_summary = f"Fix applied (parse error: {e})"
+        _discard_worktree_changes(repo_dir)
+        patch_summary = f"No safe patch applied: {e}"
         verification_records.append(make_evidence_record(
             evidence_id="fix_ev_002",
             evidence_type="patch",
             tool="codefix_agent",
-            status="warning",
+            status="blocked",
             file_path=rca.buggy_file,
-            summary=f"Agent invocation or JSON parse had an issue: {e}",
+            summary=f"Agent invocation, JSON parsing, or scope validation blocked the patch: {e}",
             confidence_impact="low",
         ))
         log_agent_event(
             agent="codefix",
             stage="patch_generated",
-            status="warning",
+            status="blocked",
             event_id=event.id,
             incident_id=incident_id,
-            summary=f"Patch agent output could not be fully parsed: {e}",
+            summary=f"Patch generation blocked: {e}",
+        )
+        return CodeFixResult(
+            success=False,
+            error=f"Patch generation blocked: {e}",
+            branch_name=branch_name,
+            confidence=rca_confidence,
+            verification_summary="Blocked because patch output was invalid or outside RCA file boundary.",
+            verification_records=verification_records,
         )
 
     # Step 3 - Commit and push
     changed_before_commit = _changed_files(repo_dir)
+    scope_ok, scope_reason, scope_allowed = _validate_patch_scope(rca, changed_before_commit, agent_output.get("files_changed") or [])
+    if not scope_ok:
+        _discard_worktree_changes(repo_dir)
+        verification_records.append(make_evidence_record(
+            evidence_id="fix_ev_003",
+            evidence_type="patch_verification",
+            tool="git_diff",
+            status="blocked",
+            summary=scope_reason,
+            confidence_impact="low",
+            metadata={"changed_files": changed_before_commit, "allowed_files": scope_allowed},
+        ))
+        log_agent_event(
+            agent="codefix",
+            stage="patch_verification",
+            status="blocked",
+            event_id=event.id,
+            incident_id=incident_id,
+            changed_files=changed_before_commit,
+            allowed_files=scope_allowed,
+            summary=scope_reason,
+        )
+        return CodeFixResult(
+            success=False,
+            error=f"Patch verification blocked: {scope_reason}",
+            branch_name=branch_name,
+            confidence=rca_confidence,
+            verification_summary="Blocked because changed files did not match RCA buggy_file boundary.",
+            verification_records=verification_records,
+        )
+
     verification_records.append(make_evidence_record(
         evidence_id="fix_ev_003",
         evidence_type="patch_verification",
         tool="git_diff",
-        status="passed" if changed_before_commit else "failed",
+        status="passed",
         summary=(
             f"Detected changed files before commit: {', '.join(changed_before_commit)}"
             if changed_before_commit
             else "No changed files detected before commit."
         ),
-        confidence_impact="high" if changed_before_commit else "low",
+        confidence_impact="high",
         metadata={"changed_files": changed_before_commit},
     ))
     log_agent_event(
         agent="codefix",
         stage="patch_verification",
-        status="passed" if changed_before_commit else "failed",
+        status="passed",
         event_id=event.id,
         incident_id=incident_id,
         changed_files=changed_before_commit,

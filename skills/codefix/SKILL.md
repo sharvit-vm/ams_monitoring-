@@ -15,6 +15,9 @@ Use this skill when applying an automated code fix from an RCA result. The goal 
 - Preserve local style, naming, indentation, error handling, and import organization.
 - Prefer existing project patterns over new abstractions.
 - Do not refactor unrelated code.
+- Treat `buggy_file` as the only automatic edit target unless the orchestrator explicitly provides additional allowed edit files.
+- Use `affected_files` and connected files as evidence/context only; do not edit them automatically.
+- If the apparent fix belongs in a caller/controller/related file that is not an allowed edit file, stop and report the blocker instead of patching it.
 - Do not introduce broad dependencies, schema changes, API changes, or config changes unless the RCA requires them.
 
 ## Required Workflow
