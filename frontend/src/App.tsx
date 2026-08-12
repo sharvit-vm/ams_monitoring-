@@ -45,7 +45,7 @@ import BarChartOutlinedIcon from '@mui/icons-material/BarChartOutlined';
 import { approveRemediation, getLatestExecution, getPendingApprovals, getWorkflow, rejectRemediation, type RemediationPlan, type SourcePlatform, type WorkflowNode } from './api';
 import { asRecord, deriveExecution } from './derive';
 
-type NodeStatus = 'completed' | 'running' | 'pending' | 'skipped';
+type NodeStatus = 'completed' | 'running' | 'pending' | 'skipped' | 'failed';
 
 type DisplayNode = {
   id: string;
@@ -64,6 +64,7 @@ type DisplayNode = {
   l2Metrics?: string[];
   l3Metrics?: string[];
   followupStatus?: NodeStatus;
+  routeLevel?: string;
   dbVerification?: Record<string, unknown>;
   dbMetrics?: Record<string, unknown>;
   dbExecution?: Record<string, unknown>;
@@ -387,7 +388,7 @@ function MetricItem({ metric }: { metric: string }) {
 }
 
 function StatusDot({ status, label }: { status: NodeStatus; label?: string }) {
-  const text = label || (status === 'completed' ? 'Done' : status === 'running' ? 'In Progress' : status === 'skipped' ? 'Skipped' : 'Pending');
+  const text = label || (status === 'completed' ? 'Done' : status === 'running' ? 'In Progress' : status === 'skipped' ? 'Skipped' : status === 'failed' ? 'Failed' : 'Pending');
   return <span className={`status-pill ${status}`}>{text}</span>;
 }
 
@@ -425,6 +426,11 @@ function NodeBlock({
           metrics={node.metrics}
           accent={node.accent}
         />
+        {/* Spine that fans out from Categorization into L2 and L3 branches */}
+        <Box className="branch-spine">
+          <span className="branch-spine-line" />
+          <span className="branch-spine-h" />
+        </Box>
         <Box className="branch-row">
           <BranchRcaCard
             label="L2"
@@ -454,25 +460,32 @@ function NodeBlock({
   }
 
   if (node.id === 'db_fix') {
-    const waiting = node.status !== 'completed' && (node.approvalStatus === 'WAITING_FOR_APPROVAL' || Boolean(selectedApprovalId));
-    const followupStatus = node.followupStatus ?? (node.status === 'completed' ? 'completed' : 'pending');
+    const isL3Route = node.routeLevel === 'L3';
+    const agentTitle = isL3Route ? 'Code Fix Agent' : 'Fix Agent';
+    const agentSubtitle = isL3Route ? 'code_fix' : node.subtitle;
+    const agentIcon = isL3Route ? <CodeOutlinedIcon /> : node.icon;
+    const waiting = node.status !== 'completed' && node.status !== 'failed' && (node.approvalStatus === 'WAITING_FOR_APPROVAL' || Boolean(selectedApprovalId));
+    const followupStatus = node.followupStatus ?? (node.status === 'completed' ? 'completed' : node.status === 'failed' ? 'skipped' : 'pending');
+    const approvalGateStatus: NodeStatus = node.status === 'failed' ? 'failed' : waiting ? 'running' : followupStatus;
     return (
       <Box className="workflow-sequence">
+        <Box className="connector-line" />
         <WorkflowCard
           index={node.index}
-          title={node.title}
-          subtitle={node.subtitle}
-          icon={node.icon}
+          title={agentTitle}
+          subtitle={agentSubtitle}
+          icon={agentIcon}
           status={waiting ? 'running' : node.status}
           metrics={node.metrics}
           accent={node.accent}
           onClickApproval={waiting ? () => onSelectApproval(selectedApprovalId || latestApprovalId) : latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
           actionLabel={waiting ? 'Waiting' : undefined}
         />
+        <Box className="connector-line" />
         <ApprovalGateCard
           approvalId={latestApprovalId}
           onOpen={latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
-          status={waiting ? 'running' : followupStatus}
+          status={approvalGateStatus}
           metrics={approvalMetrics(node)}
         />
         <Box className="connector-line connector-wide" />
@@ -485,6 +498,7 @@ function NodeBlock({
           metrics={verificationMetrics(node)}
           accent="green"
         />
+        <Box className="connector-line" />
         <WorkflowCard
           index={node.index + 2}
           title="Response Builder"
@@ -562,15 +576,21 @@ function ApprovalGateCard({
   status?: NodeStatus;
   metrics: string[];
 }) {
+  const subtitleText =
+    status === 'completed'
+      ? 'Approval completed and remediation executed'
+      : status === 'failed'
+      ? 'Remediation plan failed — no approval required'
+      : approvalId
+      ? `Remediation ${approvalId.slice(0, 8)} awaiting approval`
+      : 'Waiting for a remediation plan';
   return (
     <Box className={`approval-gate ${onOpen ? 'clickable' : ''}`} onClick={onOpen}>
-      <Box className="approval-gate-card">
+      <Box className={`approval-gate-card${status === 'failed' ? ' failed-gate' : ''}`}>
         <Box className="approval-gate-icon"><SecurityOutlinedIcon /></Box>
         <Box>
           <Typography className="workflow-card-title">Human Approval</Typography>
-          <Typography className="workflow-card-subtitle">
-            {status === 'completed' ? 'Approval completed and remediation executed' : approvalId ? `Remediation ${approvalId.slice(0, 8)} awaiting approval` : 'Waiting for a remediation plan'}
-          </Typography>
+          <Typography className="workflow-card-subtitle">{subtitleText}</Typography>
           <Box className="workflow-card-metrics approval-metrics">
             {metrics.map((metric) => <MetricItem key={metric} metric={metric} />)}
           </Box>
@@ -600,10 +620,12 @@ function openSourceCreatePage(platform?: { source: string; instance_url?: string
 function BottomNotificationRow({ source, node, completed = false }: { source: string; node: DisplayNode; completed?: boolean }) {
   const channel = notificationChannel(source);
   const alternates = notificationAlternates(source);
+  const baseIndex = node.index + 3;  // 7+1=8 approval(inline), 7+1=8 verif, 7+2=9 response, 7+3=10 notifications
+  // Notifications: Fix Agent=7, Verification=8, Response Builder=9, Notifications=10,11,12
   return (
     <Box className="bottom-notifications">
       <WorkflowCard
-        index={10}
+        index={baseIndex}
         title={`${channel.label} Notification`}
         subtitle={channel.subtitle}
         icon={channel.icon}
@@ -615,7 +637,7 @@ function BottomNotificationRow({ source, node, completed = false }: { source: st
       {alternates.map((item, index) => (
         <WorkflowCard
           key={item.source}
-          index={11 + index}
+          index={baseIndex + 1 + index}
           title={`${item.label} Notification`}
           subtitle="Not selected by current backend source"
           icon={item.icon}
@@ -843,8 +865,8 @@ function buildDisplayNodes(
   statusById.set('categorization', hasCategorisation ? 'completed' : hasExecution ? 'running' : 'pending');
   statusById.set('l2_rca', isL2 ? (hasL2Result ? 'completed' : hasCategorisation ? 'running' : 'pending') : hasCategorisation ? 'skipped' : 'pending');
   statusById.set('l3_rca', isL3 ? (hasL3Result || hasFixPlan || hasFixExecution ? 'completed' : hasCategorisation ? 'running' : 'pending') : hasCategorisation ? 'skipped' : 'pending');
-  statusById.set('fix_agent', codefixComplete || dbComplete ? 'completed' : fixFailed ? 'skipped' : fixWaiting || hasFixPlan || hasFixExecution ? 'running' : 'pending');
-  statusById.set('db_fix', codefixComplete || dbComplete ? 'completed' : fixFailed ? 'skipped' : fixWaiting || hasFixPlan || hasFixExecution ? 'running' : isL2 && hasL2Result ? 'pending' : isL3 && hasL3Result ? 'pending' : 'pending');
+  statusById.set('fix_agent', codefixComplete || dbComplete ? 'completed' : fixFailed ? 'failed' : fixWaiting || hasFixPlan || hasFixExecution ? 'running' : 'pending');
+  statusById.set('db_fix', codefixComplete || dbComplete ? 'completed' : fixFailed ? 'failed' : fixWaiting || hasFixPlan || hasFixExecution ? 'running' : isL2 && hasL2Result ? 'pending' : isL3 && hasL3Result ? 'pending' : 'pending');
 
   const selectedSource = sourceKey(execution.normalised.source || execution.response.source);
   ['servicenow', 'jira', 'github'].forEach((source) => {
@@ -853,21 +875,31 @@ function buildDisplayNodes(
 
   const l2Status = statusById.get('l2_rca') ?? 'pending';
   const l3Status = statusById.get('l3_rca') ?? 'pending';
-  const followupStatus: NodeStatus = codefixComplete || dbComplete ? 'completed' : 'pending';
+  const followupStatus: NodeStatus = codefixComplete || dbComplete ? 'completed' : fixFailed ? 'skipped' : 'pending';
 
-  const config: DisplayNode[] = nodes.map((node, index) => {
+  // Fixed step map so numbering is always sequential and gapless:
+  // 1=Source, 2=Connector, 3=Normalizer, 4=Guardrails, 5=Categorization,
+  // 6=L2/L3 branch, 7=Fix Agent, 8=Human Approval (inline), 9=Verification,
+  // 10=Response Builder, 11/12/13=Notifications
+  const fixedIndexMap: Record<string, number> = {
+    connector: 2, normalizer: 3, guardrails: 4, security_guardrails: 4,
+    categorization: 5, db_fix: 7,
+  };
+
+  const config: DisplayNode[] = nodes.map((node) => {
     const id = node.id === 'security_guardrails' ? 'guardrails' : node.id;
     const status = statusById.get(id) ?? 'pending';
+    const baseIndex = fixedIndexMap[node.id] ?? fixedIndexMap[id] ?? 7;
     return {
       id,
-      index: index + 2,
+      index: baseIndex,
       status,
       title: node.label,
       subtitle: node.service,
       icon: iconForNode(id),
       metrics: metricsForNode(id, execution),
       accent: accentForNode(id),
-      downstream: index < nodes.length - 1,
+      downstream: id !== 'db_fix',
       approvalId: id === 'db_fix' ? latestApproval?.approval_id ?? selectedApproval?.approval_id ?? String(execution.fixAgent.approval_id || '') : '',
       approvalStatus,
       l2Status,
@@ -883,6 +915,7 @@ function buildDisplayNodes(
       codefix: execution.codefix,
       normalised: execution.normalised,
       followupStatus,
+      routeLevel: level,
     };
   });
 
