@@ -8,21 +8,18 @@ class DatabaseHealthService:
     def __init__(self):
         self.db = PostgreSQLClient()
 
-    def get_database_health(self, database_name: str, ctx: dict = None):
+    def get_database_health(self, app_id: int, ctx: dict = None) -> dict:
         t0 = time.perf_counter()
         try:
             result = self.db.fetch_one(
-                """
-                SELECT a.app_name, d.*
-                FROM database_health d
-                JOIN applications a ON a.app_id = d.app_id
-                WHERE LOWER(REPLACE(a.app_name,' ','_')) = %s
-                """,
-                (database_name.lower(),),
+                "SELECT * FROM database_health WHERE app_id = %s",
+                (app_id,),
                 operation="Read database_health",
-                ctx=ctx
+                ctx=ctx,
             )
-            return result
+            if not result:
+                raise ValueError(f"No database_health record found for app_id={app_id}.")
+            return dict(result)
         except Exception as e:
             if ctx:
                 log_step_failure(ctx, "DatabaseHealthService.get_database_health",

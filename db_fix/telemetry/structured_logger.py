@@ -85,6 +85,15 @@ def emit_request_received(trace: TraceContext, application: str,
           problem_domain=problem_domain)
 
 
+def emit_app_resolved(trace: TraceContext, latency_ms: float,
+                      app_id: int, app_name: str) -> None:
+    _emit(trace, "APPLICATION_RESOLVED", "SUCCESS",
+          step="APPLICATION_RESOLUTION",
+          latency_ms=latency_ms,
+          app_id=app_id,
+          app_name=app_name)
+
+
 def emit_pipeline_completed(trace: TraceContext, latency_ms: float,
                              issues_found: int, actions_executed: int,
                              initial_status: str, final_status: str,

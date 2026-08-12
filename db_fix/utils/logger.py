@@ -169,9 +169,7 @@ def log_execution_timeline(ctx: dict, total_elapsed: float):
     logger.info(f"  {'EXECUTION TIMELINE':^76}")
     logger.info(BANNER)
     labels = [
-        "CMDB Lookup",
-        "Relationship Lookup",
-        "PostgreSQL Discovery",
+        "Application Resolution",
         "Database Health Read",
         "Diagnosis",
         "Remediation Rule Lookup",
@@ -190,18 +188,6 @@ def log_execution_timeline(ctx: dict, total_elapsed: float):
 
 
 # ── Specialised Domain Loggers ────────────────────────────────────────────────
-
-def log_servicenow_request(ctx: dict, method: str, table: str, query: str):
-    logger.info(f"{_prefix(ctx, 'ServiceNow')} [REQUEST]  "
-                f"target=ServiceNow  method={method}  table={table}  query={query}")
-
-
-def log_servicenow_response(ctx: dict, table: str, status: int,
-                             records: int, elapsed: float):
-    logger.info(f"{_prefix(ctx, 'ServiceNow')} [RESPONSE]  "
-                f"table={table}  status={status}  records={records}  "
-                f"elapsed={elapsed * 1000:.0f}ms")
-
 
 def log_db_lookup(ctx: dict, operation: str, issue_code: str = None):
     detail = f"  issue_code={issue_code}" if issue_code else ""

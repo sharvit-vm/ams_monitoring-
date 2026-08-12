@@ -22,7 +22,7 @@ import time
 from datetime import datetime, timezone
 
 from db_fix.clients.servicenow_client import ServiceNowClient
-from db_fix.utils.logger import logger, log_step_failure, DIVIDER
+from db_fix.utils.logger import logger, log_info, log_step_failure, DIVIDER
 
 
 class ServiceNowNotificationService:

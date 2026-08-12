@@ -8,7 +8,7 @@ class ExecutionService:
     def __init__(self):
         self.db = PostgreSQLClient()
 
-    def execute(self, actions: list, ctx: dict = None):
+    def execute(self, actions: list, app_id: int, ctx: dict = None) -> list:
         results = []
         total   = len(actions)
 
@@ -29,10 +29,11 @@ class ExecutionService:
                       slow_queries=0,
                       deadlocks=0,
                       last_checked=NOW()
-                    WHERE app_id=1
+                    WHERE app_id=%s
                     """,
+                    (app_id,),
                     operation="Apply remediation — reset database health",
-                    ctx=ctx
+                    ctx=ctx,
                 )
                 result = "SUCCESS"
             else:
