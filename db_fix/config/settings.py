@@ -8,13 +8,10 @@ load_dotenv(ROOT_DIR / ".env", override=False)
 
 
 class Settings(BaseSettings):
-    # Neon PostgreSQL — Enterprise Operations Database
+    SN_INSTANCE: str
+    SN_USERNAME: str
+    SN_PASSWORD: str
     DATABASE_URL: str
-
-    # ServiceNow — incident notification only (no CMDB queries)
-    SN_INSTANCE: str = ""
-    SN_USERNAME: str = ""
-    SN_PASSWORD: str = ""
 
     class Config:
         env_file = ROOT_DIR / ".env"

@@ -8,17 +8,17 @@ class VerificationService:
     def __init__(self):
         self.health = DatabaseHealthService()
 
-    def verify(self, app_id: int, ctx: dict = None) -> dict:
+    def verify(self, database_name: str, ctx: dict = None):
         t0 = time.perf_counter()
         try:
-            health = self.health.get_database_health(app_id, ctx=ctx)
+            health = self.health.get_database_health(database_name, ctx=ctx)
             return {
                 "status":             health["status"],
                 "active_connections": health["active_connections"],
                 "cpu_usage":          health["cpu_usage"],
                 "memory_usage":       health["memory_usage"],
                 "slow_queries":       health["slow_queries"],
-                "deadlocks":          health["deadlocks"],
+                "deadlocks":          health["deadlocks"]
             }
         except Exception as e:
             if ctx:

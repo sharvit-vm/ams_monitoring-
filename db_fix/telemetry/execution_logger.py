@@ -18,14 +18,16 @@ from db_fix.utils.logger import logger, BANNER, DIVIDER
 # ── Timeline builder ──────────────────────────────────────────────────────────
 
 _TIMELINE_STEPS = [
-    ("APPLICATION_RESOLUTION", "Application Resolution"),
-    ("READ_DATABASE_HEALTH",   "Database Health Read"),
-    ("DIAGNOSIS",              "Diagnosis"),
-    ("REMEDIATION_PLAN",       "Remediation Rule Lookup"),
-    ("EXECUTION",              "Execution"),
-    ("VERIFICATION",           "Verification"),
-    ("INCIDENT_HISTORY",       "Incident History"),
-    ("SN_NOTIFICATION",        "SN Notification"),
+    ("CMDB_LOOKUP",          "CMDB Lookup"),
+    ("RELATIONSHIP_LOOKUP",  "Relationship Lookup"),
+    ("POSTGRES_DISCOVERY",   "PostgreSQL Discovery"),
+    ("READ_DATABASE_HEALTH", "Database Health Read"),
+    ("DIAGNOSIS",            "Diagnosis"),
+    ("REMEDIATION_PLAN",     "Remediation Rule Lookup"),
+    ("EXECUTION",            "Execution"),
+    ("VERIFICATION",         "Verification"),
+    ("INCIDENT_HISTORY",     "Incident History"),
+    ("SN_NOTIFICATION",      "SN Notification"),
 ]
 
 
