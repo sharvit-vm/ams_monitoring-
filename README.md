@@ -77,3 +77,69 @@ Notes and development hints
 If you'd like, I can also:
 - Add a brief "development setup" section with exact dependency installation steps (pip/poetry/virtualenv) based on this repo's packaging, or
 - Add example webhook payloads and curl commands for testing each connector.
+
+Deploy backend on AWS Lambda
+
+This service can run on AWS Lambda behind API Gateway by using the provided
+`lambda_handler.py` and `Dockerfile`. A container image is recommended because
+the dependency set includes native/heavier packages such as tree-sitter,
+psycopg2, Neo4j, Pinecone, LangChain, and LangGraph.
+
+Recommended Lambda environment variables:
+
+```env
+GROQ_API_KEY=...
+GROQ_MODEL=llama-3.3-70b-versatile
+AI_TIMEOUT=30
+AUTO_ROUTE_L2_WITHOUT_HUMAN_REVIEW=true
+
+JIRA_WEBHOOK_TOKEN=...
+SERVICENOW_WEBHOOK_TOKEN=...
+GITHUB_WEBHOOK_SECRET=...
+
+CLONE_ROOT=/tmp/clone
+CACHE_DIR=/tmp/cache
+QUEUE_FILE=/tmp/data/event_queue.json
+RCA_REPORT_DIR=/tmp/data/rca_reports
+```
+
+The `/tmp` paths are important on Lambda because the function code directory is
+read-only at runtime. Repo clones, analysis caches, queue files, and RCA reports
+must be written to Lambda ephemeral storage or to a durable external store.
+
+Build and push the backend image:
+
+```bash
+docker buildx build --platform linux/amd64 --provenance=false -t ams-monitoring-lambda .
+aws ecr create-repository --repository-name ams-monitoring-lambda
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
+docker tag ams-monitoring-lambda:latest <account-id>.dkr.ecr.us-east-1.amazonaws.com/ams-monitoring-lambda:latest
+docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/ams-monitoring-lambda:latest
+```
+
+Create or update a Lambda function from that ECR image, then expose it through
+API Gateway HTTP API with proxy routes:
+
+```text
+ANY /
+ANY /{proxy+}
+```
+
+Suggested Lambda sizing for the full RCA/code-fix workflow:
+
+```text
+Timeout: 300-900 seconds
+Memory: 2048 MB or higher
+Ephemeral storage: 4096 MB or higher when L3 repo cloning/ingestion is enabled
+```
+
+After API Gateway is available, smoke test it:
+
+```bash
+python test_ams_monitoring_aws.py --base-url https://your-api-gateway-url
+```
+
+Production note: `dashboard_state.py` and `governance/approvals.py` currently
+store state in memory. For production Lambda deployments, move dashboard
+execution state and approval plans to DynamoDB or Postgres so state survives
+cold starts and is shared across concurrent Lambda instances.

@@ -1,0 +1,14 @@
+.git
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+data/
+clone/
+cache/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/build.log
