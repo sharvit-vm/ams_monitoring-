@@ -16,7 +16,9 @@ export function deriveExecution(raw: unknown) {
   const rca = asRecord(l2Data.rca);
   const fixAgent = asRecord(response.fix_agent);
   const fixAgentExecution = asRecord(fixAgent.execution_result);
-  const dbExecution = Object.keys(fixAgentExecution).length ? fixAgentExecution : Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution);
+  const l3Rca = asRecord(response.l3_rca || response.l3_rca_result || response.rca_result);
+  const codefix = asRecord(response.codefix || response.code_fix || response.codefix_result || response.code_fix_result);
+  const dbExecution = Object.keys(fixAgentExecution).length ? fixAgentExecution : Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution || response.db_fix || response.db_execution);
   const dbMetrics = asRecord(dbExecution.metrics);
   const dbVerification = asRecord(dbExecution.verification);
   const dbExplanation = asRecord(dbExecution.explanation);
@@ -29,6 +31,10 @@ export function deriveExecution(raw: unknown) {
     l2,
     l2Response,
     rca,
+    fixAgent,
+    fixAgentExecution,
+    l3Rca,
+    codefix,
     dbExecution,
     dbMetrics,
     dbVerification,
@@ -38,10 +44,10 @@ export function deriveExecution(raw: unknown) {
       application: normalised.configuration_item || rca.application || 'Unknown',
       technology: categorisation.technology || rca.technology || 'Unknown',
       priority: categorisation.priority || normalised.priority || 'Unknown',
-      status: dbExecution.overall_status || response.status || 'Unknown',
-      confidence: l2Response.confidence || categorisation.confidence,
+      status: dbExecution.overall_status || codefix.status || fixAgent.status || response.status || 'Unknown',
+      confidence: l3Rca.confidence || l3Rca.confidence_score || l2Response.confidence || categorisation.confidence,
       problemDomain: rca.problem_domain || 'Unknown',
-      assignedAgent: rca.recommended_agent || categorisation.selected_agent || 'Unknown',
+      assignedAgent: fixAgent.agent_type || rca.recommended_agent || categorisation.selected_agent || 'Unknown',
       businessImpact: categorisation.business_impact || 'Unknown',
     },
     overallObservability: collectOverallMetrics(response),
@@ -187,7 +193,9 @@ function deriveExecutionParts(raw: unknown) {
   const rca = asRecord(l2Data.rca);
   const fixAgent = asRecord(response.fix_agent);
   const fixAgentExecution = asRecord(fixAgent.execution_result);
-  const dbExecution = Object.keys(fixAgentExecution).length ? fixAgentExecution : Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution);
+  const l3Rca = asRecord(response.l3_rca || response.l3_rca_result || response.rca_result);
+  const codefix = asRecord(response.codefix || response.code_fix || response.codefix_result || response.code_fix_result);
+  const dbExecution = Object.keys(fixAgentExecution).length ? fixAgentExecution : Object.keys(fixAgent).length ? fixAgent : asRecord(l2Data.execution || response.db_fix || response.db_execution);
   const dbExplanation = asRecord(dbExecution.explanation);
   return { response, categorisation, normalised, l2, l2Response, rca, dbExecution, dbExplanation };
 }

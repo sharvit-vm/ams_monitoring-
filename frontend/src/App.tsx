@@ -67,6 +67,10 @@ type DisplayNode = {
   dbVerification?: Record<string, unknown>;
   dbMetrics?: Record<string, unknown>;
   dbExecution?: Record<string, unknown>;
+  fixAgent?: Record<string, unknown>;
+  fixAgentExecution?: Record<string, unknown>;
+  l3Rca?: Record<string, unknown>;
+  codefix?: Record<string, unknown>;
   normalised?: Record<string, unknown>;
 };
 
@@ -100,9 +104,10 @@ export function App() {
         { id: 'jira', label: 'Jira', source: 'jira' },
         { id: 'github', label: 'GitHub', source: 'github' },
       ];
-  const selectedPlatform = sourcePlatforms.find((platform) => platform.source === selectedSource) ?? sourcePlatforms[0];
-  const selectedSourceKey = sourceKey(execution.normalised.source || execution.response.source || selectedPlatform?.source || selectedSource);
-  const sourceActionLabel = selectedSource === 'servicenow' ? 'Create Incident' : 'Create Issue';
+  const executionSourceKey = sourceKey(execution.normalised.source || execution.response.source || execution.response.source_event?.source || selectedSource);
+  const selectedSourceKey = hasRecordData(execution.response) ? executionSourceKey : selectedSource;
+  const selectedPlatform = sourceOptions.find((platform) => sourceKey(platform.source) === selectedSourceKey) ?? sourceOptions[0];
+  const sourceActionLabel = selectedSourceKey === 'servicenow' ? 'Create Incident' : 'Create Issue';
   const updatedAt = latest.data?.execution?.recorded_at;
   const dashboardSummary = latest.data?.summary;
   const totalSteps = dashboardSummary?.total_steps ?? countWorkflowSteps(workflow.data?.nodes ?? []);
@@ -474,7 +479,7 @@ function NodeBlock({
         <WorkflowCard
           index={node.index + 1}
           title="Verification"
-          subtitle="Verify remediation & database health"
+          subtitle="Verify remediation result"
           icon={<CheckCircleOutlineIcon />}
           status={followupStatus}
           metrics={verificationMetrics(node)}
@@ -704,11 +709,11 @@ function normaliseStatus(value: unknown) {
 }
 
 function isCompleteStatus(value: unknown) {
-  return ['COMPLETED', 'SUCCESS', 'SUCCEEDED', 'SUCCESSFUL', 'EXECUTED', 'DONE', 'RESOLVED', 'HEALTHY', 'PASSED'].includes(normaliseStatus(value));
+  return ['COMPLETED', 'SUCCESS', 'SUCCEEDED', 'SUCCESSFUL', 'EXECUTED', 'DONE', 'RESOLVED', 'HEALTHY', 'PASSED', 'READY_FOR_EXECUTION'].includes(normaliseStatus(value));
 }
 
 function isWaitingStatus(value: unknown) {
-  return ['WAITING_FOR_APPROVAL', 'PENDING_APPROVAL', 'APPROVAL_REQUIRED', 'READY_FOR_APPROVAL'].includes(normaliseStatus(value));
+  return ['WAITING_FOR_APPROVAL', 'PENDING_APPROVAL', 'APPROVAL_REQUIRED', 'READY_FOR_APPROVAL', 'PENDING'].includes(normaliseStatus(value));
 }
 
 function isFailedStatus(value: unknown) {
@@ -721,7 +726,7 @@ function routeLevel(execution: ReturnType<typeof deriveExecution>) {
 
 function percentMetric(label: string, value: unknown) {
   if (typeof value !== 'number') return undefined;
-  return `${label} ${Math.round(value * 100)}%`;
+  return `${label} ${Math.round(value <= 1 ? value * 100 : value)}%`;
 }
 
 function textMetric(label: string, value: unknown) {
@@ -746,6 +751,20 @@ function boolMetric(label: string, value: unknown) {
   return `${label} ${value ? 'Yes' : 'No'}`;
 }
 
+function shortValue(value: unknown, max = 24) {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
+function compactMetrics(metrics: Array<string | undefined>) {
+  return metrics.filter(Boolean) as string[];
+}
+
+function firstValue(...values: unknown[]) {
+  return values.find((value) => value !== undefined && value !== null && value !== '');
+}
+
 function countWorkflowSteps(nodes: WorkflowNode[]) {
   const visibleBackendSteps = nodes.filter((node) => !['l1_placeholder', 'codefix'].includes(node.id)).length;
   return visibleBackendSteps || 13;
@@ -754,6 +773,8 @@ function countWorkflowSteps(nodes: WorkflowNode[]) {
 function deriveOverallConfidence(execution: ReturnType<typeof deriveExecution>) {
   const candidates = [
     execution.response.overall_confidence,
+    execution.l3Rca.confidence_score,
+    execution.l3Rca.confidence,
     execution.categorisation.confidence,
     execution.l2Response.confidence,
     execution.dbExecution.confidence,
@@ -794,16 +815,23 @@ function buildDisplayNodes(
   selectedApproval?: RemediationPlan,
 ) {
   const statusById = new Map<string, NodeStatus>();
-  const approvalStatus = latestApproval?.status || selectedApproval?.status || String(execution.dbExecution.status || '');
+  const approvalStatus = latestApproval?.status || selectedApproval?.status || String(execution.fixAgent.status || execution.dbExecution.status || '');
   const hasExecution = hasRecordData(execution.response);
   const hasCategorisation = hasRecordData(execution.categorisation);
   const hasL2Result = hasRecordData(execution.l2) || hasRecordData(execution.l2Response) || hasRecordData(execution.rca);
+  const hasL3Result = hasRecordData(execution.l3Rca);
+  const hasFixPlan = hasRecordData(execution.fixAgent);
+  const hasFixExecution = hasRecordData(execution.fixAgentExecution) || hasRecordData(execution.codefix);
   const hasDbResult = hasRecordData(execution.dbExecution);
   const level = routeLevel(execution);
-  const dbStatus = execution.dbExecution.overall_status || execution.dbExecution.status || execution.dbMetrics.overall_status || execution.dbVerification.status;
+  const dbStatus = firstValue(execution.dbExecution.overall_status, execution.dbExecution.status, execution.dbMetrics.overall_status, execution.dbVerification.status);
+  const codefixStatus = firstValue(execution.codefix.status, execution.fixAgent.status, execution.response.status);
   const dbComplete = hasDbResult && (isCompleteStatus(dbStatus) || isCompleteStatus(execution.dbVerification.status) || execution.dbMetrics.verification_passed === true);
-  const dbWaiting = isWaitingStatus(approvalStatus) || isWaitingStatus(execution.response.status);
-  const dbFailed = hasDbResult && (isFailedStatus(dbStatus) || isFailedStatus(execution.dbExecution.status));
+  const codefixComplete = (hasFixExecution || hasFixPlan) && (isCompleteStatus(codefixStatus) || Boolean(firstValue(execution.codefix.pr_url, execution.codefix.pull_request_url, execution.fixAgentExecution.pr_url)));
+  const fixWaiting = isWaitingStatus(approvalStatus) || isWaitingStatus(execution.response.status) || isWaitingStatus(codefixStatus);
+  const fixFailed = isFailedStatus(dbStatus) || isFailedStatus(codefixStatus);
+  const isL3 = level === 'L3';
+  const isL2 = level === 'L2';
 
   statusById.set('connector', hasExecution ? 'completed' : 'pending');
   statusById.set('normalizer', hasExecution ? 'completed' : 'pending');
@@ -813,17 +841,19 @@ function buildDisplayNodes(
   statusById.set('guardrails', guardrailStatus);
   statusById.set('security_guardrails', guardrailStatus);
   statusById.set('categorization', hasCategorisation ? 'completed' : hasExecution ? 'running' : 'pending');
-  statusById.set('l2_rca', hasL2Result ? 'completed' : level === 'L2' && hasCategorisation ? 'running' : level ? 'skipped' : 'pending');
-  statusById.set('l3_rca', level === 'L3' ? (execution.response.status === 'codefix_waiting_for_approval' ? 'running' : hasCategorisation ? 'running' : 'pending') : hasCategorisation ? 'skipped' : 'pending');
-  statusById.set('fix_agent', execution.response.status === 'codefix_waiting_for_approval' ? 'running' : 'pending');
-  statusById.set('db_fix', dbComplete ? 'completed' : dbFailed ? 'skipped' : dbWaiting ? 'running' : hasDbResult ? 'completed' : level === 'L2' && hasL2Result ? 'pending' : 'pending');
-  statusById.set('servicenow', dbComplete ? 'completed' : 'pending');
-  statusById.set('jira', 'skipped');
-  statusById.set('github', 'skipped');
+  statusById.set('l2_rca', isL2 ? (hasL2Result ? 'completed' : hasCategorisation ? 'running' : 'pending') : hasCategorisation ? 'skipped' : 'pending');
+  statusById.set('l3_rca', isL3 ? (hasL3Result || hasFixPlan || hasFixExecution ? 'completed' : hasCategorisation ? 'running' : 'pending') : hasCategorisation ? 'skipped' : 'pending');
+  statusById.set('fix_agent', codefixComplete || dbComplete ? 'completed' : fixFailed ? 'skipped' : fixWaiting || hasFixPlan || hasFixExecution ? 'running' : 'pending');
+  statusById.set('db_fix', codefixComplete || dbComplete ? 'completed' : fixFailed ? 'skipped' : fixWaiting || hasFixPlan || hasFixExecution ? 'running' : isL2 && hasL2Result ? 'pending' : isL3 && hasL3Result ? 'pending' : 'pending');
+
+  const selectedSource = sourceKey(execution.normalised.source || execution.response.source);
+  ['servicenow', 'jira', 'github'].forEach((source) => {
+    statusById.set(source, source === selectedSource && (codefixComplete || dbComplete) ? 'completed' : 'skipped');
+  });
 
   const l2Status = statusById.get('l2_rca') ?? 'pending';
   const l3Status = statusById.get('l3_rca') ?? 'pending';
-  const followupStatus: NodeStatus = statusById.get('db_fix') === 'completed' ? 'completed' : 'pending';
+  const followupStatus: NodeStatus = codefixComplete || dbComplete ? 'completed' : 'pending';
 
   const config: DisplayNode[] = nodes.map((node, index) => {
     const id = node.id === 'security_guardrails' ? 'guardrails' : node.id;
@@ -838,7 +868,7 @@ function buildDisplayNodes(
       metrics: metricsForNode(id, execution),
       accent: accentForNode(id),
       downstream: index < nodes.length - 1,
-      approvalId: id === 'db_fix' ? latestApproval?.approval_id ?? selectedApproval?.approval_id ?? '' : '',
+      approvalId: id === 'db_fix' ? latestApproval?.approval_id ?? selectedApproval?.approval_id ?? String(execution.fixAgent.approval_id || '') : '',
       approvalStatus,
       l2Status,
       l3Status,
@@ -847,6 +877,10 @@ function buildDisplayNodes(
       dbVerification: execution.dbVerification,
       dbMetrics: execution.dbMetrics,
       dbExecution: execution.dbExecution,
+      fixAgent: execution.fixAgent,
+      fixAgentExecution: execution.fixAgentExecution,
+      l3Rca: execution.l3Rca,
+      codefix: execution.codefix,
       normalised: execution.normalised,
       followupStatus,
     };
@@ -857,106 +891,115 @@ function buildDisplayNodes(
 
 function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution>) {
   if (id === 'connector') {
-    const metrics = [
-      textMetric('Payload', 'Received'),
-      textMetric('Validation', 'Passed'),
-      durationMetric('Latency', 18),
-    ].filter(Boolean) as string[];
-    return metrics.length ? metrics : ['Waiting for backend connector result'];
+    const metrics = compactMetrics([
+      textMetric('Payload', execution.response.source_event_id || execution.normalised.source_event_id ? 'Received' : undefined),
+      textMetric('Validation', execution.response.validation_status || execution.response.auth_status || (hasRecordData(execution.response) ? 'Passed' : undefined)),
+      textMetric('Event', execution.response.source_event_id || execution.normalised.source_event_id),
+      textMetric('Source', sourceLabel(sourceKey(execution.normalised.source || execution.response.source))),
+    ]);
+    return metrics.length ? metrics.slice(0, 3) : ['Waiting for backend connector result'];
   }
   if (id === 'normalizer') {
-    const metrics = [
-      textMetric('Fields', 10),
-      textMetric('Fingerprint', '3bdea4d8'),
-      durationMetric('Latency', 12),
-    ].filter(Boolean) as string[];
+    const fieldCount = Object.entries(execution.normalised).filter(([, value]) => value !== undefined && value !== null && value !== '').length;
+    const metrics = compactMetrics([
+      textMetric('Fields', fieldCount || undefined),
+      textMetric('Fingerprint', shortValue(execution.normalised.fingerprint, 12)),
+      textMetric('Error', shortValue(execution.normalised.error_type || execution.normalised.message, 28)),
+    ]);
     return metrics.length ? metrics : ['Waiting for backend normalizer result'];
   }
   if (id === 'guardrails') return guardrailMetrics(execution);
   if (id === 'categorization') {
-    const confidence = percentMetric('Confidence', 0.7);
-    const level = 'L1';
-    const metrics = [
-      confidence,
+    const level = routeLevel(execution);
+    const metrics = compactMetrics([
+      percentMetric('Confidence', execution.categorisation.confidence),
       level ? `Support Level ${level}` : undefined,
-      textMetric('Category', 'Support'),
-    ].filter(Boolean) as string[];
-    return metrics.length ? metrics : ['Waiting for categorization result'];
+      textMetric('Category', titleCaseValue(execution.categorisation.category || execution.categorisation.issue_category)),
+      textMetric('Agent', execution.categorisation.selected_agent),
+    ]);
+    return metrics.length ? metrics.slice(0, 3) : ['Waiting for categorization result'];
   }
   if (id === 'l2_rca') {
-    const level = routeLevel(execution) || 'L1';
+    const level = routeLevel(execution);
     if (level !== 'L2') {
-      return [
+      return compactMetrics([
         textMetric('Status', 'Skipped'),
-        textMetric('Reason', `Routed to ${level}`),
-        textMetric('Next Stage', 'Fix Agent'),
-      ].filter(Boolean) as string[];
+        textMetric('Reason', level ? `Routed to ${level}` : undefined),
+        textMetric('Next Stage', level === 'L3' ? 'L3 RCA' : undefined),
+      ]);
     }
-    const confidence = percentMetric('Confidence', execution.l2Response.confidence || execution.rca.confidence);
-    const duration = durationMetric('LLM Latency', asRecord(execution.l2Response.metrics).llm_latency_ms || asRecord(execution.l2Response.execution).duration_ms || asRecord(execution.l2Response.metrics).duration_ms);
-    const metrics = [
-      confidence,
-      duration,
+    const metrics = compactMetrics([
+      percentMetric('Confidence', execution.l2Response.confidence || execution.rca.confidence),
+      durationMetric('LLM Latency', asRecord(execution.l2Response.metrics).llm_latency_ms || asRecord(execution.l2Response.execution).duration_ms || asRecord(execution.l2Response.metrics).duration_ms),
       textMetric('Decision', execution.l2Response.decision || execution.rca.recommended_agent || execution.rca.problem_domain),
-    ].filter(Boolean) as string[];
+    ]);
     return metrics.length ? metrics : ['Waiting for L2 RCA result'];
   }
   if (id === 'l3_rca') {
-    const metrics = routeLevel(execution) === 'L3'
-      ? [
-          textMetric('Status', execution.l2.status || execution.response.status || 'running'),
-          textMetric('Reason', execution.rca.title || execution.rca.summary || 'Evidence available'),
-          textMetric('Route', 'L3'),
-        ].filter(Boolean) as string[]
-      : [
-          textMetric('Status', 'Skipped'),
-          textMetric('Reason', 'Routed to L1'),
-          textMetric('Route', 'Not selected'),
-        ].filter(Boolean) as string[];
-    return metrics;
+    const level = routeLevel(execution);
+    if (level !== 'L3') {
+      return compactMetrics([
+        textMetric('Status', 'Skipped'),
+        textMetric('Reason', level ? `Routed to ${level}` : undefined),
+        textMetric('Route', 'Not selected'),
+      ]);
+    }
+    const metrics = compactMetrics([
+      textMetric('Status', execution.l3Rca.status || (hasRecordData(execution.l3Rca) ? 'Completed' : execution.response.status)),
+      percentMetric('Confidence', execution.l3Rca.confidence_score || execution.l3Rca.confidence),
+      textMetric('Evidence', shortValue(firstValue(execution.l3Rca.buggy_file, execution.normalised.file_path), 36)),
+      textMetric('Route', 'L3'),
+    ]);
+    return metrics.length ? metrics.slice(0, 3) : ['Waiting for L3 RCA result'];
   }
-  if (id === 'fix_agent') {
-    const metrics = [
-      textMetric('Recommended Fixes', execution.dbExecution.recommended_fixes || execution.dbExecution.actions_count || execution.dbExecution.plan_status || 'Prepared'),
-      textMetric('Target Agent', execution.dbExecution.agent || execution.rca.recommended_agent || 'Fix Agent'),
-      textMetric('Status', execution.dbExecution.overall_status || execution.dbExecution.status || 'Pending'),
-    ].filter(Boolean) as string[];
-    return metrics.length ? metrics : ['Waiting for approval'];
-  }
-  if (id === 'db_fix') {
-    const metrics = [
-      textMetric('Recommended Fixes', execution.dbExecution.recommended_fixes || execution.dbExecution.actions_count || execution.dbExecution.plan_status || 'Prepared'),
-      textMetric('Target Agent', execution.dbExecution.agent || execution.rca.recommended_agent || 'Fix Agent'),
-      textMetric('Status', execution.dbExecution.overall_status || execution.dbVerification.status || execution.dbExecution.status || 'Pending'),
-    ].filter(Boolean) as string[];
+  if (id === 'fix_agent' || id === 'db_fix') {
+    const level = routeLevel(execution);
+    if (level === 'L3') {
+      const metrics = compactMetrics([
+        textMetric('Target Agent', execution.fixAgent.agent_type || 'code_fix'),
+        textMetric('Status', firstValue(execution.codefix.status, execution.fixAgent.status, execution.response.status)),
+        textMetric('PR', shortValue(firstValue(execution.codefix.pr_url, execution.codefix.pull_request_url, execution.fixAgentExecution.pr_url), 36)),
+        textMetric('Approval', execution.fixAgent.approval_status || execution.fixAgent.status),
+      ]);
+      return metrics.length ? metrics.slice(0, 3) : ['Waiting for code fix result'];
+    }
+    const metrics = compactMetrics([
+      textMetric('Recommended Fixes', firstValue(execution.dbExecution.recommended_fixes, execution.dbExecution.actions_count, execution.dbExecution.plan_status)),
+      textMetric('Target Agent', firstValue(execution.dbExecution.agent, execution.rca.recommended_agent, execution.fixAgent.agent_type)),
+      textMetric('Status', firstValue(execution.dbExecution.overall_status, execution.dbVerification.status, execution.dbExecution.status, execution.fixAgent.status)),
+    ]);
     return metrics.length ? metrics : ['Waiting for remediation result'];
   }
-  if (id === 'servicenow') return notificationMetrics({ dbExecution: execution.dbExecution, dbMetrics: execution.dbMetrics }, 'servicenow', true);
-  return ['Skipped'];
+  if (id === 'servicenow' || id === 'jira' || id === 'github') {
+    return notificationMetrics({ dbExecution: execution.dbExecution, dbMetrics: execution.dbMetrics, fixAgent: execution.fixAgent, codefix: execution.codefix, normalised: execution.normalised }, id, false);
+  }
+  return ['Waiting for backend result'];
 }
+
 function guardrailMetrics(execution: ReturnType<typeof deriveExecution>) {
   const guardrails = asRecord(execution.response.guardrails);
   const checks = Array.isArray(guardrails.checks) ? guardrails.checks as Array<Record<string, unknown>> : [];
-  const securityCheck = checks.find((check) => /security/i.test(String(check.display_label || check.name || '')));
+  const securityCheck = checks.find((check) => /security|policy/i.test(String(check.display_label || check.name || '')));
   const piiCheck = checks.find((check) => /pii|privacy/i.test(String(check.display_label || check.name || '')));
   const statusForCheck = (check: Record<string, unknown> | undefined) => check
     ? String(check.status || (check.passed === false ? 'Failed' : 'Passed'))
     : undefined;
-  const metrics = [
-    textMetric('Security', statusForCheck(securityCheck) || (guardrails.allowed === false ? 'Blocked' : 'Passed')),
-    textMetric('PII Scan', statusForCheck(piiCheck) || guardrails.pii_scan || guardrails.pii_status || 'Passed'),
-    textMetric('Risk', titleCaseValue(guardrails.risk_level || guardrails.risk || (guardrails.allowed === false ? 'High' : 'Medium'))),
-  ].filter(Boolean) as string[];
+  const metrics = compactMetrics([
+    textMetric('Security', statusForCheck(securityCheck) || guardrails.security_status || guardrails.policy_status || (guardrails.allowed === false ? 'Blocked' : undefined)),
+    textMetric('PII Scan', statusForCheck(piiCheck) || guardrails.pii_scan || guardrails.pii_status),
+    textMetric('Risk', guardrails.risk_level || guardrails.risk ? titleCaseValue(guardrails.risk_level || guardrails.risk) : undefined),
+  ]);
 
   if (!metrics.length && Object.keys(guardrails).length) {
     const totalChecks = Number(guardrails.total_checks || 0);
     const passedChecks = Number(guardrails.passed_checks || 0);
     if (totalChecks > 0) metrics.push(`Security ${passedChecks}/${totalChecks}`);
-    if (guardrails.risk_level) metrics.push(`Risk ${String(guardrails.risk_level)}`);
+    if (guardrails.allowed !== undefined) metrics.push(`Policy ${guardrails.allowed === false ? 'Blocked' : 'Allowed'}`);
   }
 
   return metrics.slice(0, 3).length ? metrics.slice(0, 3) : ['Waiting for backend guardrail result'];
 }
+
 function accentForNode(id: string) {
   if (id === 'guardrails' || id === 'servicenow') return 'green';
   if (id === 'l2_rca' || id === 'connector') return 'blue';
@@ -995,43 +1038,48 @@ function sourceLabel(source: string) {
 }
 
 function sourceMetrics(platform: SourcePlatform, execution: ReturnType<typeof deriveExecution>) {
-  const metrics = [
-    textMetric('Incident ID', 'INC0010002'),
-    textMetric('Priority', 'P1'),
-    textMetric('Source', sourceLabel(platform.source)),
-  ].filter(Boolean) as string[];
+  const metrics = compactMetrics([
+    textMetric('Incident ID', firstValue(execution.normalised.incident_id, execution.normalised.external_id, execution.categorisation.ticket_id, execution.response.event_id, execution.response.source_event_id)),
+    textMetric('Priority', firstValue(execution.normalised.priority, execution.categorisation.priority)),
+    textMetric('Source', sourceLabel(sourceKey(firstValue(execution.normalised.source, execution.response.source, platform.source)))),
+  ]);
   return metrics.length ? metrics : ['Waiting for backend source event'];
 }
 
 function approvalMetrics(node: DisplayNode) {
   const dbExecution = asRecord(node.dbExecution);
-  const approval = asRecord(dbExecution.approval || dbExecution.approval_request);
-  const metrics = [
-    textMetric('Approval', node.approvalStatus || approval.status || (node.approvalId ? 'Required' : 'Pending')),
-    textMetric('Risk', dbExecution.risk || dbExecution.risk_level || approval.risk || 'Review'),
-    textMetric('Approver', approval.approver || dbExecution.approver || 'Pending'),
-  ].filter(Boolean) as string[];
+  const fixAgent = asRecord(node.fixAgent);
+  const approval = asRecord(dbExecution.approval || dbExecution.approval_request || fixAgent.approval || fixAgent.approval_request);
+  const metrics = compactMetrics([
+    textMetric('Approval', node.approvalStatus || approval.status || fixAgent.status),
+    textMetric('Risk', firstValue(dbExecution.risk, dbExecution.risk_level, approval.risk, fixAgent.risk_level)),
+    textMetric('Approver', firstValue(approval.approver, dbExecution.approver, fixAgent.approver)),
+  ]);
   return metrics.length ? metrics : ['Waiting for human approval'];
 }
 
 function verificationMetrics(node: DisplayNode) {
   const verification = asRecord(node.dbVerification);
   const dbMetrics = asRecord(node.dbMetrics);
-  const metrics = [
-    textMetric('Health Check', verification.health_check || verification.status || verification.overall_status),
+  const codefix = asRecord(node.codefix);
+  const fixExecution = asRecord(node.fixAgentExecution);
+  const metrics = compactMetrics([
+    textMetric('Health Check', firstValue(verification.health_check, verification.status, verification.overall_status, codefix.verification_status, fixExecution.verification_status)),
     boolMetric('Validation', dbMetrics.verification_passed),
-    textMetric('Status', verification.status || verification.overall_status || (dbMetrics.verification_passed === true ? 'Passed' : undefined)),
-  ].filter(Boolean) as string[];
+    textMetric('Status', firstValue(verification.status, verification.overall_status, codefix.status, fixExecution.status, dbMetrics.verification_passed === true ? 'Passed' : undefined)),
+  ]);
   return metrics.length ? metrics : ['Waiting for remediation verification'];
 }
 
 function responseBuilderMetrics(node: DisplayNode) {
   const dbExecution = asRecord(node.dbExecution);
-  const metrics = [
-    textMetric('Report Status', dbExecution.report_status || dbExecution.overall_status || dbExecution.status),
-    textMetric('Sections', dbExecution.report_sections || dbExecution.sections || 'RCA, fix, verification'),
-    percentMetric('Confidence', dbExecution.confidence),
-  ].filter(Boolean) as string[];
+  const codefix = asRecord(node.codefix);
+  const l3Rca = asRecord(node.l3Rca);
+  const metrics = compactMetrics([
+    textMetric('Report Status', firstValue(dbExecution.report_status, dbExecution.overall_status, dbExecution.status, codefix.status)),
+    textMetric('Report', shortValue(firstValue(codefix.rca_report_path, l3Rca.report_path, dbExecution.report_path), 32)),
+    percentMetric('Confidence', firstValue(dbExecution.confidence, l3Rca.confidence_score, l3Rca.confidence)),
+  ]);
   return metrics.length ? metrics : ['Waiting for RCA summary'];
 }
 
@@ -1051,42 +1099,30 @@ function notificationAlternates(source: string) {
   ].filter((item) => item.source !== active).slice(0, 2);
 }
 
-function notificationMetrics(node: Pick<DisplayNode, 'dbExecution' | 'dbMetrics'>, source: string, completed: boolean) {
+function notificationMetrics(
+  node: Pick<DisplayNode, 'dbExecution' | 'dbMetrics' | 'fixAgent' | 'codefix' | 'normalised'>,
+  source: string,
+  completed: boolean,
+) {
   const dbExecution = asRecord(node.dbExecution);
   const dbMetrics = asRecord(node.dbMetrics);
+  const fixAgent = asRecord(node.fixAgent);
+  const codefix = asRecord(node.codefix);
+  const normalised = asRecord(node.normalised);
   const stages = asRecord(dbMetrics.stage_durations_ms);
-  const sourceKey = notificationChannel(source).source;
-  const notification = asRecord(dbExecution[`${sourceKey}_notification`] || dbExecution.notification || dbExecution.sn_notification);
-  if (sourceKey === 'servicenow') {
-    const metrics = [
-      textMetric('Delivery', notification.delivery || notification.status || notification.state || (completed ? 'Sent' : 'Pending')),
-      durationMetric('Response Time', notification.response_time_ms || stages[`${sourceKey}_notification`] || stages.sn_notification),
-      textMetric('Status', notification.status || notification.state || dbExecution.notification_status || (completed ? 'Sent' : 'Pending')),
-    ].filter(Boolean) as string[];
-    return metrics.length ? metrics : ['Waiting for ServiceNow notification result'];
-  }
-  if (sourceKey === 'jira') {
-    const metrics = [
-      textMetric('Status', notification.status || notification.state || (completed ? 'Sent' : 'Skipped')),
-      textMetric('Reason', notification.reason || notification.error || (completed ? 'Delivered' : 'Not selected')),
-      textMetric('Target', notification.target || notification.issue_key || notification.issue_id || sourceLabel(sourceKey)),
-    ].filter(Boolean) as string[];
-    return metrics.length ? metrics : ['Waiting for Jira notification result'];
-  }
-  if (sourceKey === 'github') {
-    const metrics = [
-      textMetric('Status', notification.status || notification.state || (completed ? 'Sent' : 'Skipped')),
-      textMetric('Reason', notification.reason || notification.error || (completed ? 'Delivered' : 'Not selected')),
-      textMetric('PR', notification.pr || notification.pull_request || notification.pr_url || 'Pending'),
-    ].filter(Boolean) as string[];
-    return metrics.length ? metrics : ['Waiting for GitHub notification result'];
-  }
-  const metrics = [
-    textMetric('Status', notification.status || notification.state || dbExecution.notification_status || (completed ? 'Sent' : 'Pending')),
-    durationMetric('Time', stages[`${sourceKey}_notification`] || stages.sn_notification),
-    textMetric('Result', completed ? 'Delivered' : 'Awaiting delivery'),
-  ].filter(Boolean) as string[];
-  if (metrics.length) return metrics;
-  return completed ? ['Backend completed; no notification details returned'] : ['Waiting for backend notification result'];
+  const activeSource = notificationChannel(source).source;
+  const notification = asRecord(dbExecution[`${activeSource}_notification`] || dbExecution.notification || dbExecution.sn_notification || fixAgent.notification || codefix.notification);
+  const delivered = completed || isCompleteStatus(notification.status) || isCompleteStatus(notification.state);
+
+  const metrics = compactMetrics([
+    textMetric('Status', firstValue(notification.status, notification.state, dbExecution.notification_status, delivered ? 'Sent' : undefined)),
+    textMetric('Reason', firstValue(notification.reason, notification.error, notification.message)),
+    durationMetric('Response Time', firstValue(notification.response_time_ms, stages[`${activeSource}_notification`], stages.sn_notification)),
+    textMetric('Target', firstValue(notification.target, notification.issue_key, notification.issue_id, normalised.incident_id, normalised.external_id)),
+    textMetric('PR', firstValue(notification.pr, notification.pull_request, notification.pr_url, codefix.pr_url, codefix.pull_request_url)),
+  ]);
+
+  if (metrics.length) return metrics.slice(0, 3);
+  return delivered ? ['Backend completed; no notification details returned'] : [`Waiting for ${sourceLabel(activeSource)} notification result`];
 }
 

@@ -46,14 +46,23 @@ def _record_remediation_dashboard_update(plan) -> None:
     plan_payload = plan.model_dump()
     response["fix_agent"] = plan_payload
     if plan.execution_result:
-        response["db_fix"] = plan.execution_result
-        l2_rca = response.get("l2_rca")
-        if isinstance(l2_rca, dict):
-            l2_response = l2_rca.get("response")
-            if isinstance(l2_response, dict):
-                data = l2_response.setdefault("data", {})
-                if isinstance(data, dict):
-                    data["execution"] = plan.execution_result
+        if plan.agent_type == "code_fix":
+            existing_codefix = response.get("codefix") if isinstance(response.get("codefix"), dict) else {}
+            response["codefix"] = {
+                **existing_codefix,
+                **plan.execution_result,
+                "approval_id": plan.approval_id,
+                "approval_status": plan.status,
+            }
+        else:
+            response["db_fix"] = plan.execution_result
+            l2_rca = response.get("l2_rca")
+            if isinstance(l2_rca, dict):
+                l2_response = l2_rca.get("response")
+                if isinstance(l2_response, dict):
+                    data = l2_response.setdefault("data", {})
+                    if isinstance(data, dict):
+                        data["execution"] = plan.execution_result
     response["status"] = plan.status
     record_execution(response)
 
