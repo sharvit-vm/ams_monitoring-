@@ -11,6 +11,7 @@ class DatabaseHealthService:
     def get_database_health(self, database_name: str, ctx: dict = None):
         t0 = time.perf_counter()
         try:
+            normalized = database_name.lower().replace(" ", "_")
             result = self.db.fetch_one(
                 """
                 SELECT a.app_name, d.*
@@ -18,10 +19,15 @@ class DatabaseHealthService:
                 JOIN applications a ON a.app_id = d.app_id
                 WHERE LOWER(REPLACE(a.app_name,' ','_')) = %s
                 """,
-                (database_name.lower(),),
+                (normalized,),
                 operation="Read database_health",
                 ctx=ctx
             )
+            if result is None:
+                raise ValueError(
+                    f"No database_health record found for application '{database_name}'. "
+                    f"Ensure an entry exists in the applications + database_health tables."
+                )
             return result
         except Exception as e:
             if ctx:
