@@ -2,12 +2,14 @@
 
 import json
 import os
+from queue import Empty
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 from typing import Any
 
 
@@ -16,7 +18,13 @@ class WebhookPayload(BaseModel):
 
 load_dotenv(override=True)
 
-from dashboard_state import _json_safe_value, latest_execution, record_execution  # noqa: E402
+from dashboard_state import (  # noqa: E402
+    _json_safe_value,
+    latest_execution,
+    record_execution,
+    subscribe_executions,
+    unsubscribe_executions,
+)
 from workflows.intake_categorisation_workflow import (  # noqa: E402
     GatewayError,
     run_intake_categorisation_workflow,
@@ -286,7 +294,9 @@ async def _run_gateway(source: str, request: Request, *, include_raw_body: bool 
         payload_bytes = str(payload).encode("utf-8")
 
     try:
-        final_state = run_intake_categorisation_workflow(
+        print(f"[gateway] Received {source_key} webhook; running workflow in threadpool")
+        final_state = await run_in_threadpool(
+            run_intake_categorisation_workflow,
             source=source_key,
             payload=payload,
             headers=dict(request.headers),
@@ -300,6 +310,7 @@ async def _run_gateway(source: str, request: Request, *, include_raw_body: bool 
     response_body = final_state.get("response", {"status": final_state.get("status", "completed")})
     safe_response_body = _json_safe_value(response_body)
     record_execution(safe_response_body)
+    print(f"[gateway] Completed {source_key} webhook; status={safe_response_body.get('status')}")
     return JSONResponse(safe_response_body, status_code=200)
 
 
@@ -361,6 +372,29 @@ async def dashboard_latest_execution():
         "execution": execution,
         "summary": _dashboard_execution_summary(execution),
     }
+
+
+@app.get("/dashboard/executions/stream")
+async def dashboard_execution_stream(request: Request):
+    queue = subscribe_executions()
+    print("[dashboard] SSE client connected")
+
+    async def events():
+        try:
+            latest = latest_execution()
+            if latest is not None:
+                yield f"event: execution\ndata: {json.dumps(latest, default=str)}\n\n"
+            while not await request.is_disconnected():
+                try:
+                    execution = await run_in_threadpool(queue.get, True, 15)
+                    yield f"event: execution\ndata: {json.dumps(execution, default=str)}\n\n"
+                except Empty:
+                    yield ": keep-alive\n\n"
+        finally:
+            unsubscribe_executions(queue)
+            print("[dashboard] SSE client disconnected")
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @app.get("/dashboard/approvals/pending")

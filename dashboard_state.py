@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from queue import Queue
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -9,6 +10,7 @@ from uuid import uuid4
 
 _LOCK = Lock()
 _LATEST_EXECUTION: dict[str, Any] | None = None
+_SUBSCRIBERS: set[Queue] = set()
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -33,12 +35,28 @@ def record_execution(response: dict[str, Any]) -> dict[str, Any]:
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "response": _json_safe_value(response),
     }
+    subscribers: list[Queue]
     with _LOCK:
         global _LATEST_EXECUTION
         _LATEST_EXECUTION = execution
+        subscribers = list(_SUBSCRIBERS)
+    for subscriber in subscribers:
+        subscriber.put(execution)
     return execution
 
 
 def latest_execution() -> dict[str, Any] | None:
     with _LOCK:
         return _LATEST_EXECUTION.copy() if _LATEST_EXECUTION else None
+
+
+def subscribe_executions() -> Queue:
+    queue: Queue = Queue()
+    with _LOCK:
+        _SUBSCRIBERS.add(queue)
+    return queue
+
+
+def unsubscribe_executions(queue: Queue) -> None:
+    with _LOCK:
+        _SUBSCRIBERS.discard(queue)

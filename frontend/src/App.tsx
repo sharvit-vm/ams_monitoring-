@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -42,7 +42,7 @@ import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import BarChartOutlinedIcon from '@mui/icons-material/BarChartOutlined';
-import { approveRemediation, getLatestExecution, getPendingApprovals, getWorkflow, rejectRemediation, type RemediationPlan, type SourcePlatform, type WorkflowNode } from './api';
+import { API_BASE_URL, approveRemediation, getLatestExecution, getPendingApprovals, getWorkflow, rejectRemediation, type RemediationPlan, type SourcePlatform, type WorkflowNode } from './api';
 import { asRecord, deriveExecution } from './derive';
 
 type NodeStatus = 'completed' | 'running' | 'pending' | 'skipped' | 'failed';
@@ -109,12 +109,23 @@ export function App() {
   const selectedSourceKey = hasRecordData(execution.response) ? executionSourceKey : selectedSource;
   const selectedPlatform = sourceOptions.find((platform) => sourceKey(platform.source) === selectedSourceKey) ?? sourceOptions[0];
   const sourceActionLabel = selectedSourceKey === 'servicenow' ? 'Create Incident' : 'Create Issue';
+  const selectedPlatformUrl = getSourceCreateUrl(selectedPlatform);
   const updatedAt = latest.data?.execution?.recorded_at;
   const dashboardSummary = latest.data?.summary;
   const totalSteps = dashboardSummary?.total_steps ?? countWorkflowSteps(workflow.data?.nodes ?? []);
   const completedSteps = dashboardSummary?.completed ?? activeNodes.filter((node) => node.status === 'completed').length;
   const overallConfidence = formatPercentSummary(dashboardSummary?.overall_confidence ?? deriveOverallConfidence(execution));
   const workflowTime = formatDurationSummary(dashboardSummary?.workflow_time_ms ?? deriveWorkflowTimeMs(execution));
+
+  useEffect(() => {
+    const streamUrl = `${API_BASE_URL.replace(/\/$/, '')}/dashboard/executions/stream`;
+    const stream = new EventSource(streamUrl);
+    stream.addEventListener('execution', () => {
+      queryClient.invalidateQueries({ queryKey: ['latest-execution'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-approvals'] });
+    });
+    return () => stream.close();
+  }, [queryClient]);
 
   const approveMutation = useMutation({
     mutationFn: async () => {
@@ -264,8 +275,8 @@ export function App() {
                 status={execution.normalised.source || execution.response.source || execution.response.source_event_id ? 'completed' : 'pending'}
                 metrics={sourceMetrics(selectedPlatform, execution)}
                 accent="green"
-                onClickApproval={() => openSourceCreatePage(selectedPlatform)}
-                actionLabel={selectedPlatform.configured_url ? sourceActionLabel : undefined}
+                onClickApproval={selectedPlatformUrl ? () => openSourceCreatePage(selectedPlatform) : undefined}
+                actionLabel={selectedPlatformUrl ? sourceActionLabel : undefined}
               />
             )}
 
@@ -601,19 +612,30 @@ function ApprovalGateCard({
   );
 }
 
-function openSourceCreatePage(platform?: { source: string; instance_url?: string | null; project_url?: string | null; repo_url?: string | null }) {
+function getSourceCreateUrl(platform?: { source: string; instance_url?: string | null; project_url?: string | null; repo_url?: string | null }) {
   if (!platform) return;
-  const baseUrl = platform.instance_url || platform.project_url || platform.repo_url;
+  const normalizedSource = sourceKey(platform.source);
+  const baseUrl =
+    platform.instance_url
+    || platform.project_url
+    || platform.repo_url
+    || (normalizedSource === 'jira' ? import.meta.env.VITE_JIRA_INSTANCE || import.meta.env.VITE_JIRA_URL : undefined);
   if (!baseUrl) return;
   const base = baseUrl.replace(/\/+$/, '');
   let url = base;
-  if (platform.source === 'servicenow') {
+  if (normalizedSource === 'servicenow') {
     url = `${base}/nav_to.do?uri=incident.do%3Fsys_id%3D-1`;
-  } else if (platform.source === 'jira') {
+  } else if (normalizedSource === 'jira') {
     url = `${base}/secure/CreateIssue!default.jspa`;
-  } else if (platform.source === 'github') {
+  } else if (normalizedSource === 'github') {
     url = `${base}/issues/new`;
   }
+  return url;
+}
+
+function openSourceCreatePage(platform?: { source: string; instance_url?: string | null; project_url?: string | null; repo_url?: string | null }) {
+  const url = getSourceCreateUrl(platform);
+  if (!url) return;
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 

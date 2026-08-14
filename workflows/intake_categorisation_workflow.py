@@ -14,6 +14,7 @@ from langgraph.graph import END, StateGraph
 from agents.code_fix import run_code_fix
 from agents.l3_rca import run_l3_rca
 from categorisation_adapter import categorise_error_event
+from dashboard_state import record_execution
 from issuelayer.connectors.base import log_graph_stage, log_intake_snapshot, normalised_event_log_payload
 from issuelayer.intake.normalizers.router import normalise_source_event
 from issuelayer.intake.schemas import ErrorEvent
@@ -132,6 +133,44 @@ def _compact_text(*values: Any) -> str:
         if text.strip():
             parts.append(text.strip())
     return "\n\n".join(parts)
+
+
+def _record_connector_dashboard_update(source: str, source_event: SourceEvent) -> None:
+    payload = source_event.model_dump(mode="json")
+    raw_payload = payload.get("raw_payload")
+    raw_payload_keys = sorted(str(key) for key in raw_payload.keys()) if isinstance(raw_payload, dict) else []
+    record_execution({
+        "status": "source_event_created",
+        "source": source_event.source,
+        "source_event_id": source_event.id,
+        "event_id": None,
+        "normalised_event": None,
+        "source_event": {
+            "id": source_event.id,
+            "source": source_event.source,
+            "event_type": source_event.event_type,
+            "external_id": source_event.external_id,
+            "raw_payload_keys": raw_payload_keys[:30],
+        },
+        "connector": {
+            "status": "completed",
+            "source": source,
+            "external_id": source_event.external_id,
+        },
+        "categorisation": None,
+        "guardrails": None,
+        "l1": None,
+        "l2_rca": None,
+        "fix_agent": None,
+        "l3_rca": None,
+        "l3_rca_report_path": None,
+        "codefix": None,
+        "reason": "Payload received; workflow is running.",
+    })
+    print(
+        "[dashboard] Published source_event_created; "
+        f"source={source_event.source}, external_id={source_event.external_id}, source_event_id={source_event.id}"
+    )
 
 
 def _build_l2_request(event: ErrorEvent, categorisation: dict[str, Any]) -> dict[str, Any]:
@@ -389,6 +428,7 @@ def build_intake_categorisation_workflow():
         log_graph_stage(1, "connector_started", "running", source=source)
         source_event = parser(state)
         log_intake_snapshot("raw_source_event", source_event.source, source_event, stage_order=2)
+        _record_connector_dashboard_update(source, source_event)
         log_graph_stage(
             3,
             "connector_completed",
