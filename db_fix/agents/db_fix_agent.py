@@ -305,7 +305,7 @@ class DBFixAgent:
             emit_remediation_started(trace, action_count=len(actions))
             metrics.start_timer("execution")
             t0 = time.perf_counter()
-            execution = self.execution_service.execute(actions, ctx=ctx)
+            execution = self.execution_service.execute(actions, ctx=ctx, database_name=database["name"])
             elapsed_exec = time.perf_counter() - t0
             metrics.stop_timer("execution")
             record_timing(ctx, "Execution", elapsed_exec)
