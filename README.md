@@ -51,6 +51,31 @@ Repo-level defaults (optional)
 
 These repo defaults are only needed when incoming incidents (for example, L3 incidents from Jira/ServiceNow) do not include repository information.
 
+
+RAG and repository knowledge settings for L3 RCA:
+
+```env
+AUTO_INGEST_ON_WEBHOOK=true          # build parser/LLM/hierarchy/Neo4j context for L3 incidents
+AUTO_RAG_ON_WEBHOOK=true             # build local lexical RAG chunks for weak or missing traceback locations
+AUTO_VECTOR_INGEST_ON_WEBHOOK=false  # also upsert semantic vectors when true
+VECTOR_STORE_PROVIDER=none           # none, pinecone, or chroma
+PINECONE_API_KEY=...                 # required only when VECTOR_STORE_PROVIDER=pinecone
+PINECONE_INDEX_NAME=...
+CHROMA_PERSIST_DIR=cache/chroma       # used only when VECTOR_STORE_PROVIDER=chroma
+CHROMA_COLLECTION_NAME=ams_rag_chunks
+RAG_BM25_TOP_K=50
+RAG_SEMANTIC_TOP_K=50
+RAG_RRF_TOP_K=30
+RAG_RERANK_TOP_K=12
+RAG_RETRIEVAL_TOP_K=8
+RAG_RRF_K=60
+RAG_CHUNK_MAX_CHARS=6000
+RAG_VECTOR_UPSERT_BATCH=50
+```
+
+For strong tracebacks, L3 RCA still uses deterministic file/line resolution first and then Neo4j. RAG is used as supporting evidence. For weak or missing tracebacks, RAG retrieves candidate code/docs/config chunks first, then RCA can use those candidates before graph expansion.
+
+
 ```env
 JIRA_DEFAULT_REPO_URL=...
 JIRA_DEFAULT_REPO_FULL_NAME=...
