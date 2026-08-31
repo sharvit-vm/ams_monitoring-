@@ -36,6 +36,7 @@ sqlalchemy
 # Code understanding for embedded L3 RCA/codefix
 neo4j>=5.0.0
 pinecone>=3.0.0
+chromadb>=0.5.0
 tiktoken>=0.6.0
 tqdm>=4.66.0
 tree-sitter>=0.21.0

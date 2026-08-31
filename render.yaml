@@ -51,6 +51,26 @@ services:
         value: main
       - key: CATEGORISATION_INCLUDE_RAW_PAYLOAD
         value: "false"
+      - key: AUTO_RAG_ON_WEBHOOK
+        value: "true"
+      - key: AUTO_VECTOR_INGEST_ON_WEBHOOK
+        value: "false"
+      - key: VECTOR_STORE_PROVIDER
+        value: none
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX_NAME
+        sync: false
+      - key: RAG_BM25_TOP_K
+        value: "50"
+      - key: RAG_SEMANTIC_TOP_K
+        value: "50"
+      - key: RAG_RRF_TOP_K
+        value: "30"
+      - key: RAG_RERANK_TOP_K
+        value: "12"
+      - key: RAG_RETRIEVAL_TOP_K
+        value: "8"
 
   # ══════════════════════════════════════════════════════════════════════════
   # SERVICE 2 — Frontend React Dashboard

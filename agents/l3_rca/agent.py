@@ -30,6 +30,8 @@ from observability.agent_trace import (
     make_evidence_record,
     trace_span,
 )
+from rag.retrieval.evidence_bundle import build_evidence_bundle, format_evidence_bundle
+from rag.retrieval.retriever import format_retrieval_result, retrieve_incident_context
 
 
 L3_RCA_TOOLS = [
@@ -90,6 +92,8 @@ def _format_prefetch_context(prefetch_context: dict) -> str:
         ("FUNCTION CALL CONTEXT", "function_calls"),
         ("CONNECTED FILES", "connected_files"),
         ("CONNECTED FILE SUMMARIES", "connected_file_summaries"),
+        ("RAG CANDIDATE CONTEXT", "rag_context"),
+        ("EVIDENCE BUNDLE", "evidence_bundle_context"),
         ("NOTE", "note"),
     ):
         value = prefetch_context.get(key)
@@ -109,9 +113,25 @@ def _tool_failed(value) -> bool:
     return isinstance(value, dict) and bool(value.get("error"))
 
 
-def _build_parallel_context(event: ErrorEvent, knowledge_id: str) -> dict:
+def _build_parallel_context(event: ErrorEvent, knowledge_id: str, repo_dir: str) -> dict:
+    context = {}
+
     if not event.file_path:
-        return {"note": "No file_path available for prefetch."}
+        rag_result = retrieve_incident_context(event, knowledge_id, repo_dir)
+        evidence_bundle = build_evidence_bundle(
+            event=event,
+            knowledge_id=knowledge_id,
+            retrieval_result=rag_result,
+            deterministic_context=context,
+            max_connected_files=L3_CONTEXT_MAX_CONNECTED_FILES,
+        )
+        return {
+            "note": "No file_path available for deterministic prefetch; using RAG candidates plus Neo4j expansion.",
+            "rag_context": format_retrieval_result(rag_result, max_chars=L3_CONTEXT_MAX_CHARS),
+            "rag_result": rag_result.model_dump(mode="json"),
+            "evidence_bundle": evidence_bundle.model_dump(mode="json"),
+            "evidence_bundle_context": format_evidence_bundle(evidence_bundle, max_chars=L3_CONTEXT_MAX_CHARS),
+        }
 
     start_line = max(1, (event.line_number or 1) - L3_CONTEXT_WINDOW_LINES // 2)
     end_line = max(start_line, (event.line_number or start_line) + L3_CONTEXT_WINDOW_LINES // 2)
@@ -129,14 +149,15 @@ def _build_parallel_context(event: ErrorEvent, knowledge_id: str) -> dict:
             {"function_name": event.function_name, "file_path": event.file_path, "knowledge_id": knowledge_id},
         )
 
-    context = {}
-    with ThreadPoolExecutor(max_workers=min(6, len(tasks))) as executor:
+    with ThreadPoolExecutor(max_workers=min(7, len(tasks) + 1)) as executor:
         futures = {
             name: _submit_tool(executor, tool, payload)
             for name, (tool, payload) in tasks.items()
         }
+        rag_future = executor.submit(retrieve_incident_context, event, knowledge_id, repo_dir)
         for name, future in futures.items():
             context[name] = future.result()
+        rag_result = rag_future.result()
 
     connected_files = context.get("connected_files") or []
     if isinstance(connected_files, list):
@@ -157,6 +178,17 @@ def _build_parallel_context(event: ErrorEvent, knowledge_id: str) -> dict:
                 for file_path, future in futures.items()
             }
 
+    evidence_bundle = build_evidence_bundle(
+        event=event,
+        knowledge_id=knowledge_id,
+        retrieval_result=rag_result,
+        deterministic_context=context,
+        max_connected_files=L3_CONTEXT_MAX_CONNECTED_FILES,
+    )
+    context["rag_context"] = format_retrieval_result(rag_result, max_chars=L3_CONTEXT_MAX_CHARS)
+    context["rag_result"] = rag_result.model_dump(mode="json")
+    context["evidence_bundle"] = evidence_bundle.model_dump(mode="json")
+    context["evidence_bundle_context"] = format_evidence_bundle(evidence_bundle, max_chars=L3_CONTEXT_MAX_CHARS)
     return context
 
 
@@ -164,6 +196,38 @@ def _build_evidence_records(event: ErrorEvent, knowledge_id: str, prefetch_conte
     records = []
     start_line = max(1, (event.line_number or 1) - L3_CONTEXT_WINDOW_LINES // 2)
     end_line = max(start_line, (event.line_number or start_line) + L3_CONTEXT_WINDOW_LINES // 2)
+
+    rag_result = prefetch_context.get("rag_result") or {}
+    rag_hits = rag_result.get("hits") or [] if isinstance(rag_result, dict) else []
+    if rag_hits:
+        top_hit = rag_hits[0]
+        records.append(make_evidence_record(
+            evidence_id="l3_ev_rag_001",
+            evidence_type="retrieval",
+            tool="rag.retrieve_incident_context",
+            file_path=top_hit.get("file_path"),
+            line_start=top_hit.get("start_line"),
+            line_end=top_hit.get("end_line"),
+            summary=(
+                f"RAG selected {len(rag_hits)} verified candidate chunk(s); "
+                f"top_file={top_hit.get('file_path')} score={top_hit.get('score')}"
+            ),
+            confidence_impact="medium",
+            metadata={"knowledge_id": knowledge_id, "hits": rag_hits[:5]},
+        ))
+
+    evidence_bundle = prefetch_context.get("evidence_bundle") or {}
+    graph_context = evidence_bundle.get("graph_context") or {} if isinstance(evidence_bundle, dict) else {}
+    if evidence_bundle:
+        records.append(make_evidence_record(
+            evidence_id="l3_ev_bundle_001",
+            evidence_type="evidence_bundle",
+            tool="rag.build_evidence_bundle",
+            file_path=(evidence_bundle.get("primary_candidate") or {}).get("file_path") if isinstance(evidence_bundle, dict) else None,
+            summary=(evidence_bundle.get("evidence_summary") or "Built structured evidence bundle from traceback, RAG, and Neo4j.") if isinstance(evidence_bundle, dict) else "Built structured evidence bundle.",
+            confidence_impact="high" if graph_context.get("status") == "completed" else "medium",
+            metadata=evidence_bundle if isinstance(evidence_bundle, dict) else {},
+        ))
 
     failing_range = prefetch_context.get("failing_range")
     if _has_source_context(prefetch_context):
@@ -272,8 +336,24 @@ def _calculate_confidence(event: ErrorEvent, prefetch_context: dict, result: L3R
     source_file_read = _has_source_context(prefetch_context)
     function_calls = prefetch_context.get("function_calls") or {}
     connected_files = prefetch_context.get("connected_files") or []
+    rag_hits = (prefetch_context.get("rag_result") or {}).get("hits") or []
+    rag_candidates_found = bool(rag_hits)
     traceback_has_file_line = bool(event.file_path and event.line_number and event.traceback)
-    connected_context_found = bool(connected_files) or bool(function_calls.get("calls")) or bool(function_calls.get("called_by"))
+    evidence_bundle = prefetch_context.get("evidence_bundle") or {}
+    bundle_graph = evidence_bundle.get("graph_context") or {} if isinstance(evidence_bundle, dict) else {}
+    bundle_confidence = evidence_bundle.get("confidence_inputs") or {} if isinstance(evidence_bundle, dict) else {}
+    graph_expansion_found = bundle_graph.get("status") == "completed" and (
+        bool(bundle_graph.get("connected_files"))
+        or bool((bundle_graph.get("function_calls") or {}).get("calls"))
+        or bool((bundle_graph.get("function_calls") or {}).get("called_by"))
+        or bool(bundle_graph.get("file_summary"))
+    )
+    connected_context_found = (
+        bool(connected_files)
+        or bool(function_calls.get("calls"))
+        or bool(function_calls.get("called_by"))
+        or graph_expansion_found
+    )
     fix_location_identified = bool(result.buggy_file and result.buggy_lines)
     evidence_mentions_file = any(
         event.file_path and event.file_path in str(item)
@@ -281,9 +361,9 @@ def _calculate_confidence(event: ErrorEvent, prefetch_context: dict, result: L3R
     )
 
     score = 0.0
-    score += 0.25 if traceback_has_file_line else 0.0
-    score += 0.25 if source_file_read else 0.0
-    score += 0.20 if evidence_mentions_file or source_file_read else 0.0
+    score += 0.25 if traceback_has_file_line else 0.10 if rag_candidates_found else 0.0
+    score += 0.25 if source_file_read else 0.15 if rag_candidates_found else 0.0
+    score += 0.20 if evidence_mentions_file or source_file_read or rag_candidates_found else 0.0
     score += 0.15 if connected_context_found else 0.0
     score += 0.10 if fix_location_identified else 0.0
     score += 0.05 if result.root_cause and result.fix_suggestion else 0.0
@@ -292,8 +372,11 @@ def _calculate_confidence(event: ErrorEvent, prefetch_context: dict, result: L3R
     breakdown = {
         "traceback_has_file_line": traceback_has_file_line,
         "source_file_read": source_file_read,
-        "failing_line_or_file_supported_by_evidence": evidence_mentions_file or source_file_read,
+        "rag_candidates_found": rag_candidates_found,
+        "failing_line_or_file_supported_by_evidence": evidence_mentions_file or source_file_read or rag_candidates_found,
         "connected_context_found": connected_context_found,
+        "graph_expansion_found": graph_expansion_found,
+        "evidence_bundle_inputs": bundle_confidence,
         "fix_location_identified": fix_location_identified,
         "root_cause_and_fix_suggestion_present": bool(result.root_cause and result.fix_suggestion),
         "calculation": (
@@ -418,7 +501,7 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
                     status="running",
                     event_id=event.id,
                     incident_id=event.incident_id or event.external_id or "",
-                    summary="Collecting source, token, Neo4j file, folder, function, and connected-file evidence.",
+                    summary="Collecting deterministic source context, hybrid RAG candidates, and Neo4j expansion evidence.",
                     tools=[
                         "read_file_range",
                         "get_token_count",
@@ -426,9 +509,11 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
                         "get_folder_context",
                         "get_connected_files",
                         "get_function_calls" if event.function_name else "",
+                        "rag.retrieve_incident_context",
+                        "rag.build_evidence_bundle",
                     ],
                 )
-                prefetch_context = _build_parallel_context(event, knowledge_id)
+                prefetch_context = _build_parallel_context(event, knowledge_id, repo_dir)
                 evidence_records = _build_evidence_records(event, knowledge_id, prefetch_context)
                 failing_range = prefetch_context.get("failing_range")
                 source_context = _has_source_context(prefetch_context)
@@ -442,6 +527,8 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
                     source_file_read=source_context,
                     failing_range_chars=len(failing_range) if isinstance(failing_range, str) else 0,
                     connected_files=len(prefetch_context.get("connected_files") or []),
+                    rag_hits=len((prefetch_context.get("rag_result") or {}).get("hits") or []),
+                    graph_expansion_status=((prefetch_context.get("evidence_bundle") or {}).get("graph_context") or {}).get("status"),
                     evidence_ids=[record["evidence_id"] for record in evidence_records],
                 )
                 log_agent_event(

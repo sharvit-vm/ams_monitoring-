@@ -32,6 +32,7 @@ CLONE_ROOT = os.getenv("CLONE_ROOT", "clone")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 AUTO_INGEST_ON_WEBHOOK = os.getenv("AUTO_INGEST_ON_WEBHOOK", "true").lower() == "true"
 AUTO_VECTOR_INGEST_ON_WEBHOOK = os.getenv("AUTO_VECTOR_INGEST_ON_WEBHOOK", "false").lower() == "true"
+AUTO_RAG_ON_WEBHOOK = os.getenv("AUTO_RAG_ON_WEBHOOK", "true").lower() == "true"
 
 
 class GatewayError(Exception):
@@ -324,11 +325,14 @@ def _ingest_repo_for_rca(repo_dir: str, knowledge_id: str) -> None:
     state = build_hierarchy(state)
     state = neo4j_ingest(state)
 
-    if AUTO_VECTOR_INGEST_ON_WEBHOOK:
-        from phases.vector_ingest import vector_ingest
+    if AUTO_RAG_ON_WEBHOOK:
+        from rag.indexing.index_pipeline import build_rag_index
 
-        print(f"[graph] Ingesting repo into Pinecone; knowledge_id={knowledge_id}")
-        state = vector_ingest(state)
+        print(
+            f"[graph] Building RAG index; knowledge_id={knowledge_id}, "
+            f"semantic={AUTO_VECTOR_INGEST_ON_WEBHOOK}"
+        )
+        state = build_rag_index(state, include_semantic=AUTO_VECTOR_INGEST_ON_WEBHOOK)
 
     print(f"[graph] Repo ingestion ready; files={len(state.files)}, knowledge_id={knowledge_id}")
 
