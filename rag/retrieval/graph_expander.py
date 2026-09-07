@@ -44,3 +44,18 @@ def expand_graph_context(candidate: EvidenceCandidate | None, knowledge_id: str,
         )
 
     return graph_context
+
+
+def expand_graph_candidates(candidates: list[EvidenceCandidate], knowledge_id: str, max_candidates: int = 3, max_connected_files: int = 5) -> list[dict]:
+    """Expand a bounded candidate set while retaining per-candidate provenance."""
+    contexts = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        key = (candidate.file_path, candidate.symbol_name)
+        if not candidate.file_path or key in seen:
+            continue
+        seen.add(key)
+        contexts.append(expand_graph_context(candidate, knowledge_id, max_connected_files=max_connected_files))
+        if len(contexts) >= max_candidates:
+            break
+    return contexts

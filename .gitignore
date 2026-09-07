@@ -8,3 +8,42 @@ venv/
 data/
 node_modules/
 package/
+
+# Secrets and local configuration
+.env.*
+!.env.example
+
+# Python bytecode and test/tool caches
+*.py[cod]
+*$py.class
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments and build artifacts
+env/
+build/
+dist/
+*.egg-info/
+
+# Runtime state, clones, logs, and generated reports
+clone/
+logs/
+*.log
+
+# Local vector database and generated RAG evaluation outputs
+chroma/
+rag/evaluation/results/
+rag/evaluation/results_*/
+rag/evaluation/*.jsonl
+
+# Frontend generated output
+frontend/dist/
+frontend/build/
+
+# IDE and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

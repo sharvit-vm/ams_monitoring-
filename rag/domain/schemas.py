@@ -69,13 +69,31 @@ class EvidenceCandidate(BaseModel):
     end_line: int = 0
     score: float = 0.0
     reason: str = ""
+    role: str = "candidate"
+    frame_index: int | None = None
+
+
+class TracebackFrame(BaseModel):
+    """Parsed stack frame retained as provenance, not as a fix decision."""
+
+    frame_index: int
+    file_hint: str = ""
+    file_path: str = ""
+    function_name: str = ""
+    class_name: str = ""
+    line_number: int = 0
+    raw: str = ""
+    framework_frame: bool = False
 
 
 class EvidenceBundle(BaseModel):
     knowledge_id: str
     primary_candidate: EvidenceCandidate | None = None
     traceback_candidate: EvidenceCandidate | None = None
+    traceback_frames: list[TracebackFrame] = Field(default_factory=list)
+    traceback_candidates: list[EvidenceCandidate] = Field(default_factory=list)
     rag_candidates: list[EvidenceCandidate] = Field(default_factory=list)
+    candidate_graph_contexts: list[dict[str, Any]] = Field(default_factory=list)
     same_file_context: list[dict[str, Any]] = Field(default_factory=list)
     graph_context: dict[str, Any] = Field(default_factory=dict)
     doc_context: list[dict[str, Any]] = Field(default_factory=list)
