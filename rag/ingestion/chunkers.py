@@ -8,7 +8,7 @@ from typing import Iterable
 
 from models import FileInfo
 from rag.domain.schemas import RetrievalChunk
-from rag.ingestion.file_classifier import classify_file, is_retrievable_file
+from rag.ingestion.file_classifier import classify_file, is_retrievable_file, retrieval_metadata
 
 
 def _hash_text(text: str) -> str:
@@ -73,7 +73,8 @@ def _make_chunk(
         return None
 
     symbol_label = symbol_name or section_path
-    chunk_id = _stable_id(knowledge_id, file_info.path, start_line, end_line, symbol_label or content_type)
+    content_hash = _hash_text(text)
+    chunk_id = _stable_id(knowledge_id, file_info.path, start_line, end_line, symbol_label or content_type, content_hash)
     parent_file_id = _stable_id(knowledge_id, "file", file_info.path)
     parent_symbol_id = _stable_id(knowledge_id, file_info.path, symbol_name) if symbol_name else ""
     embedding_content = _embedding_text(
@@ -96,7 +97,7 @@ def _make_chunk(
         section_path=section_path,
         content=text,
         embedding_content=embedding_content,
-        content_hash=_hash_text(text),
+        content_hash=content_hash,
         parent_file_id=parent_file_id,
         parent_symbol_id=parent_symbol_id,
         chunk_order=chunk_order,
@@ -108,6 +109,7 @@ def _make_chunk(
             "package": file_info.package or "",
             "file_summary": file_info.summary or "",
             "file_purpose": file_info.purpose or "",
+            **retrieval_metadata(file_info.path, file_info.language or "text", content_type),
         },
     )
 
@@ -126,10 +128,18 @@ def _link_neighbors(chunks: list[RetrievalChunk]) -> list[RetrievalChunk]:
     return chunks
 
 
-def _split_text_lines(lines: list[str], max_chars: int) -> Iterable[tuple[int, int, str]]:
+def _split_text_lines(lines: list[str], max_chars: int, start_line_offset: int = 0) -> Iterable[tuple[int, int, str]]:
     current: list[str] = []
-    current_start = 1
-    for index, line in enumerate(lines, start=1):
+    current_start = start_line_offset + 1
+    for index, line in enumerate(lines, start=start_line_offset + 1):
+        if len(line) > max_chars:
+            if current:
+                yield current_start, index - 1, "".join(current)
+                current = []
+            for offset in range(0, len(line), max_chars):
+                yield index, index, line[offset:offset + max_chars]
+            current_start = index + 1
+            continue
         if current and len("".join(current)) + len(line) > max_chars:
             yield current_start, index - 1, "".join(current)
             current = []
@@ -137,7 +147,6 @@ def _split_text_lines(lines: list[str], max_chars: int) -> Iterable[tuple[int, i
         current.append(line)
     if current:
         yield current_start, current_start + len(current) - 1, "".join(current)
-
 
 def _markdown_sections(lines: list[str], max_chars: int) -> Iterable[tuple[int, int, str, str]]:
     heading = ""
@@ -173,21 +182,29 @@ def build_retrieval_chunks(file_info: FileInfo, knowledge_id: str, max_chars: in
     chunks: list[RetrievalChunk] = []
 
     if content_type == "code" and file_info.functions:
-        for order, fn in enumerate(file_info.functions):
-            chunk = _make_chunk(
-                knowledge_id=knowledge_id,
-                file_info=file_info,
-                content_type="code_symbol",
-                start_line=fn.start_line,
-                end_line=fn.end_line,
-                content=_line_range(lines, fn.start_line, fn.end_line),
-                chunk_order=order,
-                symbol_name=fn.name,
-                symbol_type="method" if fn.is_method else "function",
-                called_symbols=fn.calls,
-            )
-            if chunk:
-                chunks.append(chunk)
+        chunk_order = 0
+        for fn in file_info.functions:
+            symbol_lines = lines[max(0, fn.start_line - 1):fn.end_line]
+            symbol_text = "".join(symbol_lines)
+            ranges = [(fn.start_line, fn.end_line, symbol_text)]
+            if len(symbol_text) > max_chars:
+                ranges = list(_split_text_lines(symbol_lines, max_chars=max_chars, start_line_offset=fn.start_line - 1))
+            for start, end, text in ranges:
+                chunk = _make_chunk(
+                    knowledge_id=knowledge_id,
+                    file_info=file_info,
+                    content_type="code_symbol",
+                    start_line=start,
+                    end_line=end,
+                    content=text,
+                    chunk_order=chunk_order,
+                    symbol_name=fn.name,
+                    symbol_type="method" if fn.is_method else "function",
+                    called_symbols=fn.calls,
+                )
+                if chunk:
+                    chunks.append(chunk)
+                    chunk_order += 1
         return _link_neighbors(chunks)
 
     if content_type == "documentation":

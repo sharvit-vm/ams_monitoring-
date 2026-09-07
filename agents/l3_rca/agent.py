@@ -126,6 +126,7 @@ def _build_parallel_context(event: ErrorEvent, knowledge_id: str, repo_dir: str)
             knowledge_id=knowledge_id,
             retrieval_result=rag_result,
             deterministic_context=context,
+            repo_dir=repo_dir,
             max_connected_files=L3_CONTEXT_MAX_CONNECTED_FILES,
         )
         return {
@@ -186,6 +187,7 @@ def _build_parallel_context(event: ErrorEvent, knowledge_id: str, repo_dir: str)
         knowledge_id=knowledge_id,
         retrieval_result=rag_result,
         deterministic_context=context,
+        repo_dir=repo_dir,
         max_connected_files=L3_CONTEXT_MAX_CONNECTED_FILES,
     )
     context["rag_context"] = format_retrieval_result(rag_result, max_chars=L3_CONTEXT_MAX_CHARS)

@@ -10,7 +10,7 @@ from rag.ingestion.chunkers import build_retrieval_chunks
 from rag.indexing.lexical_index import save_lexical_index
 from rag.indexing.vector_store import get_vector_store
 
-BATCH_SIZE = int(os.getenv("RAG_VECTOR_UPSERT_BATCH", "50"))
+BATCH_SIZE = int(os.getenv("RAG_VECTOR_UPSERT_BATCH", "100"))
 RAG_CHUNK_MAX_CHARS = int(os.getenv("RAG_CHUNK_MAX_CHARS", "6000"))
 
 
@@ -41,9 +41,12 @@ def build_rag_index(state: PipelineState, include_semantic: bool = True) -> Pipe
 
     vector_store = get_vector_store()
     indexed = 0
-    for batch in _batched(chunks, BATCH_SIZE):
+    total_batches = (len(chunks) + BATCH_SIZE - 1) // BATCH_SIZE if chunks else 0
+    print(f"[RAG] Semantic upsert started; provider={provider}, chunks={len(chunks)}, batch_size={BATCH_SIZE}, batches={total_batches}")
+    for batch_number, batch in enumerate(_batched(chunks, BATCH_SIZE), start=1):
         vector_store.upsert_chunks(batch)
         indexed += len(batch)
+        print(f"[RAG] Semantic upsert progress; batch={batch_number}/{total_batches}, indexed={indexed}/{len(chunks)}")
     print(f"[RAG] Semantic index ready; provider={provider}, vectors={indexed}, knowledge_id={state.knowledge_id}")
 
     state.vector_complete = True
