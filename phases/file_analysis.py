@@ -6,6 +6,7 @@ Runs tree-sitter parser on each file.
 Extracts functions, classes, imports and caches to disk.
 """
 import json
+import hashlib
 from pathlib import Path
 from typing import Optional
 from tqdm import tqdm
@@ -84,6 +85,13 @@ def analyze_files(state: PipelineState) -> PipelineState:
     for file_info in tqdm(state.files, desc="Parsing files"):
 
         cached = load_file_cache(cache_dir, file_info.path)
+        if file_info.language == "java":
+            from parsers.java_parser import JavaParser
+            source_hash = hashlib.sha256(Path(file_info.absolute_path).read_bytes()).hexdigest()
+            if cached and (cached.parser_version != JavaParser.VERSION
+                           or cached.source_hash != source_hash):
+                cached = None
+            file_info.source_hash = source_hash
         if cached:
             updated_files.append(cached)
             cache_hit += 1

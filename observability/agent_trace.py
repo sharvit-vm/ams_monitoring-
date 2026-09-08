@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -195,27 +196,42 @@ def trace_span(
         "agent": agent,
         **(metadata or {}),
     }
+    manager = None
     try:
         if client and hasattr(client, "start_as_current_observation"):
-            with client.start_as_current_observation(
+            candidate = client.start_as_current_observation(
                 as_type="agent" if agent else "span",
                 name=name,
                 input=input_data,
                 metadata=merged_metadata,
-            ) as observation:
-                yield observation
-                duration_ms = int((time.perf_counter() - start) * 1000)
+            )
+            observation = candidate.__enter__()
+            manager = candidate
+    except Exception as exc:
+        print(f"[observability] Langfuse span skipped; name={name} error={exc}")
+    error_info = (None, None, None)
+    try:
+        # Yield once; application errors must propagate without being mistaken
+        # for a tracing failure or suppressed by the SDK context manager.
+        yield observation
+    except BaseException:
+        error_info = sys.exc_info()
+        raise
+    finally:
+        if observation is not None and error_info[0] is None:
+            try:
                 if hasattr(observation, "update"):
                     observation.update(
-                        output={"status": "completed", "duration_ms": duration_ms},
+                        output={"status": "completed", "duration_ms": int((time.perf_counter() - start) * 1000)},
                         metadata=merged_metadata,
                     )
-        else:
-            yield observation
-    except Exception as exc:  # pragma: no cover - optional dependency/runtime
-        print(f"[observability] Langfuse span skipped; name={name} error={exc}")
-        yield None
-    finally:
+            except Exception as exc:
+                print(f"[observability] Langfuse span update failed; name={name} error={exc}")
+        if manager is not None:
+            try:
+                manager.__exit__(*error_info)
+            except Exception as exc:
+                print(f"[observability] Langfuse span close failed; name={name} error={exc}")
         if client and _enabled(os.getenv("LANGFUSE_FLUSH_ON_SPAN"), default=True):
             langfuse_flush()
 

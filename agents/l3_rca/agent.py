@@ -3,7 +3,9 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 import json
 import os
+import re
 import time
+from pathlib import Path
 
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
@@ -334,6 +336,132 @@ def _confidence_level(score: float) -> str:
     return "low"
 
 
+def _semantic_validation_warnings(event: ErrorEvent, prefetch_context: dict, result: L3RCAResult) -> list[str]:
+    """Return conservative warnings for claims that contradict visible source evidence."""
+    source_text = str(prefetch_context.get("failing_range") or "")
+    rag_text = str(prefetch_context.get("rag_context") or "")
+    evidence_text = " ".join(result.evidence or [])
+    analysis_text = " ".join(
+        [result.root_cause or "", result.fix_suggestion or "", result.reasoning or "", evidence_text]
+    ).lower()
+    source_lower = f"{source_text}\n{rag_text}".lower()
+    warnings = []
+
+    # Exception messages can omit a numeric prefix that is still present in the
+    # source input. Do not trust an overflow explanation until the representation
+    # and conversion branch have been reconciled.
+    has_hex_evidence = bool(re.search(r"0x[0-9a-f]+|hex[_ ]?digits|hex number", source_lower))
+    claims_decimal_overflow = any(
+        phrase in analysis_text
+        for phrase in (
+            "exceeds integer.max_value",
+            "exceed integer.max_value",
+            "larger than integer.max_value",
+            "exceeds the maximum limit for an integer",
+            "exceed the maximum limit for an integer",
+            "decimal value exceeds",
+            "decimal overflow",
+        )
+    )
+    if has_hex_evidence and claims_decimal_overflow:
+        warnings.append(
+            "The source contains hexadecimal parsing evidence, but the RCA claims decimal integer overflow; representation and conversion branch require re-verification."
+        )
+
+    # Codefix is constrained to the primary RCA file. A suggestion that names
+    # only an upstream caller can make the model patch the wrong boundary even
+    # when the failing dereference was localized correctly.
+    buggy_path = Path((result.buggy_file or "").replace("\\", "/"))
+    buggy_name = buggy_path.name.lower()
+    suggestion = (result.fix_suggestion or "").lower()
+    for affected_file in result.affected_files or []:
+        affected_path = Path(affected_file.replace("\\", "/"))
+        affected_name = affected_path.name.lower()
+        mentions_affected = bool(re.search(r"\b" + re.escape(affected_path.stem.lower()) + r"\b", suggestion)) if affected_path.stem else False
+        mentions_buggy = bool(re.search(r"\b" + re.escape(buggy_path.stem.lower()) + r"\b", suggestion)) if buggy_path.stem else False
+        if affected_name and affected_name != buggy_name and mentions_affected and not mentions_buggy:
+            warnings.append(
+                f"The proposed fix targets affected file {affected_name}, but the verified failure site is {buggy_name}; remediation location requires review."
+            )
+            break
+
+    return warnings
+
+
+def _review_semantic_result(
+    event: ErrorEvent,
+    prefetch_context: dict,
+    result: L3RCAResult,
+    warnings: list[str],
+) -> L3RCAResult:
+    """Ask the model to correct a source/effect contradiction before publishing RCA."""
+    source_context = _trim_text(_format_prefetch_context(prefetch_context), L3_CONTEXT_MAX_CHARS)
+    review_payload = result.model_dump(exclude={"evidence_records", "confidence_breakdown"})
+    review_prompt = f"""
+Review the proposed L3 RCA below against the direct source evidence. This is a correction
+pass, not a request to defend the original answer.
+
+Incident:
+  Error type: {event.error_type}
+  Message: {event.message}
+  Traceback:
+{event.traceback}
+
+Generated RCA:
+{json.dumps(review_payload, indent=2, default=str)}
+
+Validation warnings:
+{json.dumps(warnings, indent=2)}
+
+Source and retrieval evidence:
+{source_context}
+
+Correct the RCA if the proposed explanation conflicts with the source. Preserve the
+correct file and function unless the source proves they are wrong. For parsing and
+numeric failures, explicitly determine the input representation and the executed branch;
+do not treat a value printed by an exception as decimal if the source parsed it as
+hexadecimal or another base. The fix direction must match the actual source logic.
+
+Return only the complete L3RCAResult JSON object with exactly the same fields as the
+generated RCA.
+"""
+    try:
+        response = agent_llm.invoke([HumanMessage(content=review_prompt)])
+        reviewed = _parse_l3_rca_result(response.content)
+        # A semantic review must not silently move the incident to a new artifact.
+        # Localization was independently supported by traceback/RAG evidence.
+        reviewed.buggy_file = result.buggy_file
+        reviewed.buggy_function = result.buggy_function
+        reviewed.buggy_lines = result.buggy_lines
+        return reviewed
+    except Exception as exc:
+        log_agent_event(
+            agent="l3_rca",
+            stage="semantic_verification",
+            status="failed",
+            event_id=event.id,
+            incident_id=event.incident_id or event.external_id or "",
+            summary=f"Semantic RCA review failed: {exc}",
+        )
+        return result
+
+
+def _mark_semantic_review_unresolved(result: L3RCAResult, warnings: list[str]) -> L3RCAResult:
+    """Prevent an unresolved semantic contradiction from becoming an actionable fix."""
+    warning = warnings[0] if warnings else "Semantic RCA verification did not complete."
+    result.root_cause = "Semantic verification could not reconcile the generated RCA with the source representation."
+    result.fix_suggestion = "Manual review required; automated remediation is blocked until the causal explanation is verified."
+    result.reasoning = (
+        "The source location was identified, but the causal explanation remained "
+        f"inconsistent after semantic review. {warning}"
+    )
+    result.evidence = [
+        "Source location was independently identified, but the causal explanation was not verified."
+    ] + list(warnings)
+    result.confidence = "low"
+    return result
+
+
 def _calculate_confidence(event: ErrorEvent, prefetch_context: dict, result: L3RCAResult) -> tuple[float, str, dict]:
     source_file_read = _has_source_context(prefetch_context)
     function_calls = prefetch_context.get("function_calls") or {}
@@ -361,6 +489,8 @@ def _calculate_confidence(event: ErrorEvent, prefetch_context: dict, result: L3R
         event.file_path and event.file_path in str(item)
         for item in (result.evidence or [])
     )
+    semantic_warnings = _semantic_validation_warnings(event, prefetch_context, result)
+    semantic_warnings = semantic_warnings or list(prefetch_context.get("semantic_review_warnings") or [])
 
     score = 0.0
     score += 0.25 if traceback_has_file_line else 0.10 if rag_candidates_found else 0.0
@@ -370,6 +500,9 @@ def _calculate_confidence(event: ErrorEvent, prefetch_context: dict, result: L3R
     score += 0.10 if fix_location_identified else 0.0
     score += 0.05 if result.root_cause and result.fix_suggestion else 0.0
     score = min(score, 1.0)
+    semantic_review_unresolved = bool(prefetch_context.get("semantic_review_unresolved"))
+    if semantic_warnings or semantic_review_unresolved:
+        score = min(score, 0.49 if semantic_review_unresolved else 0.74)
 
     breakdown = {
         "traceback_has_file_line": traceback_has_file_line,
@@ -381,9 +514,13 @@ def _calculate_confidence(event: ErrorEvent, prefetch_context: dict, result: L3R
         "evidence_bundle_inputs": bundle_confidence,
         "fix_location_identified": fix_location_identified,
         "root_cause_and_fix_suggestion_present": bool(result.root_cause and result.fix_suggestion),
+        "semantic_validation_warnings": semantic_warnings,
+        "semantic_review_unresolved": semantic_review_unresolved,
         "calculation": (
             "0.25 traceback file/line + 0.25 source read + 0.20 source/evidence match "
-            "+ 0.15 connected context + 0.10 fix location + 0.05 RCA completeness"
+            "+ 0.15 connected context + 0.10 fix location + 0.05 RCA completeness; "
+            "unresolved semantic contradictions cap confidence at 0.49; "
+            "reviewable contradictions cap confidence at 0.74"
         ),
     }
     return score, _confidence_level(score), breakdown
@@ -548,6 +685,32 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
                 reset_tool_context(repo_token, knowledge_token)
 
             parsed = _parse_l3_rca_result(result["messages"][-1].content)
+            semantic_warnings = _semantic_validation_warnings(event, prefetch_context, parsed)
+            if semantic_warnings:
+                log_agent_event(
+                    agent="l3_rca",
+                    stage="semantic_verification",
+                    status="running",
+                    event_id=event.id,
+                    incident_id=event.incident_id or event.external_id or "",
+                    warnings=semantic_warnings,
+                    summary="Reviewing RCA because generated reasoning conflicts with source representation evidence.",
+                )
+                parsed = _review_semantic_result(event, prefetch_context, parsed, semantic_warnings)
+                remaining_warnings = _semantic_validation_warnings(event, prefetch_context, parsed)
+                if remaining_warnings:
+                    prefetch_context["semantic_review_unresolved"] = True
+                    prefetch_context["semantic_review_warnings"] = remaining_warnings
+                    parsed = _mark_semantic_review_unresolved(parsed, remaining_warnings)
+                log_agent_event(
+                    agent="l3_rca",
+                    stage="semantic_verification",
+                    status="completed",
+                    event_id=event.id,
+                    incident_id=event.incident_id or event.external_id or "",
+                    warnings=remaining_warnings,
+                    summary="Semantic RCA review completed before confidence calculation.",
+                )
             score, level, breakdown = _calculate_confidence(event, prefetch_context, parsed)
             parsed.confidence_score = score
             parsed.confidence = level
