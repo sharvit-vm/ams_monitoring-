@@ -21,6 +21,7 @@ Relationships:
   (FunctionNode)-[:BELONGS_TO]->(FileNode)
   (ClassNode)-[:BELONGS_TO]->(FileNode)
   (ClassNode)-[:HAS_METHOD]->(FunctionNode)
+  (ClassNode)-[:IMPLEMENTS|EXTENDS]->(ClassNode)
   (FunctionNode)-[:CALLS]->(FunctionNode)
   (LevelNode)-[:PARENT]->(LevelNode)
 """
@@ -191,6 +192,9 @@ def create_class_nodes(driver, state: PipelineState):
             "start_line":   cls.start_line,
             "end_line":     cls.end_line,
             "base_classes": cls.base_classes,
+            "implemented_interfaces": cls.implemented_interfaces,
+            "extended_classes": cls.extended_classes,
+            "is_interface": cls.is_interface,
             "methods":      cls.methods,
             "knowledge_id": state.knowledge_id,
         }
@@ -203,6 +207,9 @@ def create_class_nodes(driver, state: PipelineState):
         SET n.start_line   = cls.start_line,
             n.end_line     = cls.end_line,
             n.base_classes = cls.base_classes,
+            n.implemented_interfaces = cls.implemented_interfaces,
+            n.extended_classes = cls.extended_classes,
+            n.is_interface = cls.is_interface,
             n.methods      = cls.methods
         WITH n, cls
         MATCH (f:FileNode {path: cls.file_path, knowledge_id: cls.knowledge_id})
@@ -300,49 +307,130 @@ def create_class_has_method_relationships(driver, state: PipelineState):
     """, batch)
 
 
-def create_calls_relationships(driver, state: PipelineState):
-    # Build lookup: function name -> (file_path, start_line) for first occurrence as fallback
-    global_func_lookup: dict[str, tuple] = {}
-    for f in state.files:
-        for func in f.functions:
-            if func.name not in global_func_lookup:
-                global_func_lookup[func.name] = (f.path, func.start_line)
+def create_type_relationships(driver, state: PipelineState):
+    """Link Java implementations/interfaces so DI call paths can be expanded."""
+    class_lookup: dict[str, tuple[str, str]] = {}
+    from phases.java_calls import JavaSymbols
+    symbols = JavaSymbols(state.files)
 
-    # Build per-file function name -> start_line map for same-file resolution
-    file_func_info: dict[str, dict[str, int]] = {
-        f.path: {func.name: func.start_line for func in f.functions}
-        for f in state.files
-    }
+    def target_type(file, name):
+        if file.language == "java":
+            resolved = symbols.resolve_type(file, name)
+            return (resolved[0].path, resolved[1].name) if resolved else None
+        return class_lookup.get(f"{file.package}.{name}") or class_lookup.get(name)
+    for f in state.files:
+        package_name = f.package or ""
+        for cls in f.classes:
+            class_lookup.setdefault(cls.name, (f.path, cls.name))
+            if package_name:
+                class_lookup.setdefault(f"{package_name}.{cls.name}", (f.path, cls.name))
 
     batch = []
     for f in state.files:
-        for func in f.functions:
-            for called_name in func.calls:
-                # Prefer same-file match, fall back to global lookup
-                if called_name in file_func_info.get(f.path, {}):
-                    callee_file = f.path
-                    callee_start = file_func_info[f.path][called_name]
-                elif called_name in global_func_lookup:
-                    callee_file, callee_start = global_func_lookup[called_name]
-                else:
-                    continue
-
-                batch.append({
-                    "caller_name":       func.name,
-                    "caller_file":       f.path,
-                    "caller_start_line": func.start_line,
-                    "callee_name":       called_name,
-                    "callee_file":       callee_file,
-                    "callee_start_line": callee_start,
-                    "knowledge_id":      state.knowledge_id,
-                })
+        package_name = f.package or ""
+        for cls in f.classes:
+            for interface_name in cls.implemented_interfaces:
+                target = target_type(f, interface_name)
+                if target:
+                    batch.append({
+                        "source_path": f.path,
+                        "source_name": cls.name,
+                        "target_path": target[0],
+                        "target_name": target[1],
+                        "relation": "IMPLEMENTS",
+                        "knowledge_id": state.knowledge_id,
+                    })
+            for base_name in cls.extended_classes:
+                target = target_type(f, base_name)
+                if target:
+                    batch.append({
+                        "source_path": f.path,
+                        "source_name": cls.name,
+                        "target_path": target[0],
+                        "target_name": target[1],
+                        "relation": "EXTENDS",
+                        "knowledge_id": state.knowledge_id,
+                    })
 
     _run_batch(driver, """
         UNWIND $batch AS r
-        MATCH (caller:FunctionNode {name: r.caller_name, file_path: r.caller_file, start_line: r.caller_start_line, knowledge_id: r.knowledge_id})
-        MATCH (callee:FunctionNode {name: r.callee_name, file_path: r.callee_file, start_line: r.callee_start_line, knowledge_id: r.knowledge_id})
-        MERGE (caller)-[:CALLS]->(callee)
+        MATCH (source:ClassNode {name: r.source_name, file_path: r.source_path, knowledge_id: r.knowledge_id})
+        MATCH (target:ClassNode {name: r.target_name, file_path: r.target_path, knowledge_id: r.knowledge_id})
+        FOREACH (_ IN CASE WHEN r.relation = 'IMPLEMENTS' THEN [1] ELSE [] END |
+            MERGE (source)-[:IMPLEMENTS]->(target))
+        FOREACH (_ IN CASE WHEN r.relation = 'EXTENDS' THEN [1] ELSE [] END |
+            MERGE (source)-[:EXTENDS]->(target))
     """, batch)
+
+
+def create_calls_relationships(driver, state: PipelineState):
+    from phases.java_calls import java_call_batch
+    from parsers.java_parser import JavaParser
+
+    java_files = [f for f in state.files if f.language == "java"]
+    if any(f.parser_version != JavaParser.VERSION for f in java_files):
+        raise ValueError("Java parser cache is outdated; rerun file analysis before graph ingestion")
+    batch, unresolved = java_call_batch(state)
+
+    # Preserve the existing non-Java resolution path.
+    lookup = {}
+    for file in state.files:
+        if file.language != "java":
+            for fn in file.functions:
+                lookup.setdefault(fn.name, (file.path, fn.start_line))
+    for file in state.files:
+        if file.language == "java":
+            continue
+        local = {fn.name: fn.start_line for fn in file.functions}
+        for fn in file.functions:
+            for name in fn.calls:
+                target = (file.path, local[name]) if name in local else lookup.get(name)
+                if target:
+                    batch.append({
+                        "caller_name": fn.name, "caller_file": file.path,
+                        "caller_start_line": fn.start_line, "callee_name": name,
+                        "callee_file": target[0], "callee_start_line": target[1],
+                        "knowledge_id": state.knowledge_id,
+                        "resolution": "legacy_name", "call_line": None, "receiver": None,
+                    })
+
+    query = """
+        UNWIND $batch AS r
+        MATCH (caller:FunctionNode {name: r.caller_name, file_path: r.caller_file,
+               start_line: r.caller_start_line, knowledge_id: r.knowledge_id})
+        MATCH (callee:FunctionNode {name: r.callee_name, file_path: r.callee_file,
+               start_line: r.callee_start_line, knowledge_id: r.knowledge_id})
+        MERGE (caller)-[edge:CALLS]->(callee)
+        SET edge.resolution = r.resolution
+        SET edge.call_lines = CASE
+            WHEN r.call_line IS NULL OR r.call_line IN coalesce(edge.call_lines, [])
+            THEN coalesce(edge.call_lines, [])
+            ELSE coalesce(edge.call_lines, []) + r.call_line END,
+            edge.receivers = CASE
+            WHEN r.receiver IS NULL OR r.receiver IN coalesce(edge.receivers, [])
+            THEN coalesce(edge.receivers, [])
+            ELSE coalesce(edge.receivers, []) + r.receiver END
+        RETURN count(*) AS matched
+    """
+
+    def write(tx):
+        # Replace only outgoing CALLS for the Java files in this snapshot.
+        # A failed rebuild rolls back the removal and the new edges together.
+        if java_files:
+            tx.run("""
+                MATCH (fn:FunctionNode {knowledge_id: $knowledge_id})-[r:CALLS]->()
+                WHERE fn.file_path IN $paths
+                DELETE r
+            """, knowledge_id=state.knowledge_id,
+                   paths=[f.path for f in java_files]).consume()
+        if batch:
+            record = tx.run(query, batch=batch).single()
+            if not record or record["matched"] != len(batch):
+                raise ValueError("Call graph references missing or ambiguous function nodes")
+
+    with driver.session() as session:
+        session.execute_write(write)
+    print(f"[Neo4j] Call resolution; resolved_sites={len(batch)}, unresolved_java_sites={unresolved}")
 
 
 def _build_file_lookup(state: PipelineState) -> dict[str, str]:
@@ -419,6 +507,8 @@ def create_imports_function_relationships(driver, state: PipelineState):
 
 def create_imports_class_relationships(driver, state: PipelineState):
     file_lookup = _build_file_lookup(state)
+    from phases.java_calls import JavaSymbols
+    symbols = JavaSymbols(state.files)
 
     batch = []
     for f in state.files:
@@ -427,6 +517,9 @@ def create_imports_class_relationships(driver, state: PipelineState):
                 continue
             module_normalized = sym.module.replace(".", "/")
             target_path = file_lookup.get(module_normalized) or file_lookup.get(sym.module)
+            if f.language == "java":
+                resolved = symbols.resolve_type(f, f"{sym.module}.{sym.name}")
+                target_path = resolved[0].path if resolved else None
             if not target_path or target_path == f.path:
                 continue
             batch.append({
@@ -519,6 +612,7 @@ def neo4j_ingest(state: PipelineState) -> PipelineState:
         ("FileNode -[:IN_FOLDER]-> LevelNode",              create_file_in_folder_relationships),
         ("LevelNode -[:PARENT]-> LevelNode",                create_level_parent_relationships),
         ("ClassNode -[:HAS_METHOD]-> FunctionNode",         create_class_has_method_relationships),
+        ("ClassNode -[:IMPLEMENTS/EXTENDS]-> ClassNode",     create_type_relationships),
         ("FunctionNode -[:CALLS]-> FunctionNode",           create_calls_relationships),
         ("FileNode -[:IMPORTS_FUNCTION]-> FunctionNode",    create_imports_function_relationships),
         ("FileNode -[:IMPORTS_CLASS]-> ClassNode",          create_imports_class_relationships),
@@ -530,6 +624,7 @@ def neo4j_ingest(state: PipelineState) -> PipelineState:
             fn(driver, state)
         except Exception as e:
             print(f"\n  [Error] {label}: {e}")
+            raise
 
     print(f"\n[Neo4j] Ingestion complete.")
     print(f"  Files     : {len(state.files)}")

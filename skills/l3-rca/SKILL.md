@@ -32,6 +32,16 @@ The failing line is the failure point. It is not automatically the root cause.
 7. Stop expanding once the causal path is clear enough to produce evidence-backed RCA.
 8. State unknowns explicitly when graph data, source context, or stacktrace data is incomplete.
 
+## Representation and Conversion Checks
+
+- Preserve the exact representation of values from the incident and source. A value
+  shown without a prefix in an exception may have been normalized by a parser; inspect
+  the original input and the branch that handled it before calling it decimal,
+  hexadecimal, binary, octal, encoded, signed, or unsigned.
+- For conversion and range failures, prove the conversion rule from source before
+  claiming overflow. Check the selected branch, prefix handling, digit count, sign, and
+  fallback type before recommending a numeric-type change.
+
 ## Universal Failure Heuristics
 
 - Null/None/undefined/nil: identify the exact expression, then trace where that value should have been created, checked, injected, loaded, or returned.
@@ -48,6 +58,8 @@ The failing line is the failure point. It is not automatically the root cause.
 - Every root-cause claim must be supported by at least one source line, stacktrace frame, graph relationship, or prefetched context item.
 - Prefer direct evidence from source reads over assumptions from names.
 - Do not mark confidence as `high` unless the failing code was read and the causal path is clear.
+- Do not mark confidence as `high` when the file and line are correct but the causal
+  explanation depends on an unverified interpretation of the input representation.
 - Use `medium` when the likely cause is supported but one important caller/config/input source was not available.
 - Use `low` when RCA is mostly based on the stacktrace or incomplete context.
 - Do not list unrelated connected files as affected files.
