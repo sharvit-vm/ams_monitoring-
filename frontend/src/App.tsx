@@ -360,7 +360,7 @@ function WorkflowCard({
           </Box>
           {actionLabel && onClickApproval ? (
             <Button
-              className="source-action-btn"
+              className="ghost-btn"
               onClick={(event) => {
                 event.stopPropagation();
                 onClickApproval();
