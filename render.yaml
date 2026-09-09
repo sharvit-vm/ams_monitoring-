@@ -29,6 +29,8 @@ services:
         sync: false
       - key: SN_PASSWORD
         sync: false
+      - key: JIRA_INSTANCE
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: GITHUB_WEBHOOK_SECRET

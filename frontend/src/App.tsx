@@ -73,6 +73,7 @@ type DisplayNode = {
   l3Rca?: Record<string, unknown>;
   codefix?: Record<string, unknown>;
   normalised?: Record<string, unknown>;
+  agentType?: string;
 };
 
 export function App() {
@@ -96,7 +97,6 @@ export function App() {
     return approvals.data?.approvals.find((item) => item.approval_id === selectedApprovalId);
   }, [approvals.data?.approvals, selectedApprovalId]);
   const nodes = workflow.data?.nodes ?? [];
-  const activeNodes = useMemo(() => buildDisplayNodes(nodes, execution, latestApproval, selectedApproval), [nodes, execution, latestApproval, selectedApproval]);
   const sourcePlatforms = workflow.data?.source_platforms ?? [];
   const sourceOptions = sourcePlatforms.length
     ? sourcePlatforms
@@ -107,9 +107,14 @@ export function App() {
       ];
   const executionSourceKey = sourceKey(execution.normalised.source || execution.response.source || execution.response.source_event?.source || selectedSource);
   const selectedSourceKey = hasRecordData(execution.response) ? executionSourceKey : selectedSource;
-  const selectedPlatform = sourceOptions.find((platform) => sourceKey(platform.source) === selectedSourceKey) ?? sourceOptions[0];
-  const sourceActionLabel = selectedSourceKey === 'servicenow' ? 'Create Incident' : 'Create Issue';
+  const activeNodes = useMemo(
+    () => buildDisplayNodes(nodes, execution, selectedSourceKey, latestApproval, selectedApproval),
+    [nodes, execution, selectedSourceKey, latestApproval, selectedApproval],
+  );
+  const selectedPlatform = sourceOptions.find((platform) => sourceKey(platform.source) === selectedSource) ?? sourceOptions[0];
+  const sourceActionLabel = selectedSource === 'servicenow' ? 'Create Incident' : 'Create Issue';
   const selectedPlatformUrl = getSourceCreateUrl(selectedPlatform);
+  const selectedPlatformHasExecution = hasRecordData(execution.response) && executionSourceKey === selectedSource;
   const updatedAt = latest.data?.execution?.recorded_at;
   const dashboardSummary = latest.data?.summary;
   const totalSteps = dashboardSummary?.total_steps ?? countWorkflowSteps(workflow.data?.nodes ?? []);
@@ -272,8 +277,8 @@ export function App() {
                 title={selectedPlatform.label}
                 subtitle="External incident platform"
                 icon={<Box className="sn-badge">{sourceBadge(selectedPlatform.source)}</Box>}
-                status={execution.normalised.source || execution.response.source || execution.response.source_event_id ? 'completed' : 'pending'}
-                metrics={sourceMetrics(selectedPlatform, execution)}
+                status={selectedPlatformHasExecution ? 'completed' : 'pending'}
+                metrics={sourceMetrics(selectedPlatform, execution, selectedPlatformHasExecution)}
                 accent="green"
                 onClickApproval={selectedPlatformUrl ? () => openSourceCreatePage(selectedPlatform) : undefined}
                 actionLabel={selectedPlatformUrl ? sourceActionLabel : undefined}
@@ -287,7 +292,6 @@ export function App() {
                 source={selectedSourceKey}
                 selectedApprovalId={selectedApprovalId}
                 onSelectApproval={setSelectedApprovalId}
-                latestApprovalId={latestApproval?.approval_id ?? ''}
               />
             ))}
           </Box>
@@ -418,13 +422,11 @@ function NodeBlock({
   source,
   selectedApprovalId,
   onSelectApproval,
-  latestApprovalId,
 }: {
   node: DisplayNode;
   source: string;
   selectedApprovalId: string;
   onSelectApproval: (value: string) => void;
-  latestApprovalId: string;
 }) {
   if (node.id === 'categorization') {
     return (
@@ -451,15 +453,14 @@ function NodeBlock({
             status={node.l2Status ?? 'pending'}
             icon={<SettingsSuggestOutlinedIcon />}
             metrics={node.l2Metrics ?? ['Waiting for L2 RCA result']}
-            onClick={latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
           />
           <BranchRcaCard
             label="L3"
             title={node.l3Status === 'skipped' ? 'L3 RCA (Skipped)' : 'L3 RCA'}
             subtitle="High Complexity"
-            status={node.l3Status ?? 'skipped'}
+            status={node.l3Status ?? 'pending'}
             icon={<CodeOutlinedIcon />}
-            metrics={node.l3Metrics ?? ['Skipped']}
+            metrics={node.l3Metrics ?? ['Waiting for categorization result']}
           />
         </Box>
         <Box className="merge-spine">
@@ -472,33 +473,31 @@ function NodeBlock({
   }
 
   if (node.id === 'db_fix') {
-    const isL3Route = node.routeLevel === 'L3';
-    const agentTitle = isL3Route ? 'Code Fix Agent' : 'Fix Agent';
-    const agentSubtitle = isL3Route ? 'code_fix' : node.subtitle;
-    const agentIcon = isL3Route ? <CodeOutlinedIcon /> : node.icon;
+    const isCodeFixAgent = node.agentType === 'code_fix';
+    const agentSubtitle = node.agentType || 'Awaiting agent selection';
+    const agentIcon = isCodeFixAgent ? <CodeOutlinedIcon /> : node.icon;
     const waiting = node.status !== 'completed' && node.status !== 'failed' && (node.approvalStatus === 'WAITING_FOR_APPROVAL' || Boolean(selectedApprovalId));
     const followupStatus = node.followupStatus ?? (node.status === 'completed' ? 'completed' : node.status === 'failed' ? 'skipped' : 'pending');
     const approvalGateStatus: NodeStatus = node.status === 'failed' ? 'failed' : waiting ? 'running' : followupStatus;
     return (
       <Box className="workflow-sequence">
         <Box className="connector-line" />
-        <WorkflowCard
-          index={node.index}
-          title={agentTitle}
-          subtitle={agentSubtitle}
-          icon={agentIcon}
-          status={waiting ? 'running' : node.status}
-          metrics={node.metrics}
-          accent={node.accent}
-          onClickApproval={waiting ? () => onSelectApproval(selectedApprovalId || latestApprovalId) : latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
-          actionLabel={waiting ? 'Waiting' : undefined}
-        />
-        <Box className="connector-line" />
         <ApprovalGateCard
-          approvalId={latestApprovalId}
-          onOpen={latestApprovalId ? () => onSelectApproval(latestApprovalId) : undefined}
+          index={node.index - 1}
+          approvalId={node.approvalId}
+          onOpen={node.approvalId ? () => onSelectApproval(node.approvalId) : undefined}
           status={approvalGateStatus}
           metrics={approvalMetrics(node)}
+        />
+        <Box className="connector-line" />
+        <WorkflowCard
+          index={node.index}
+          title="Fix Agent"
+          subtitle={agentSubtitle}
+          icon={agentIcon}
+          status={waiting ? 'pending' : node.status}
+          metrics={node.metrics}
+          accent={node.accent}
         />
         <Box className="connector-line connector-wide" />
         <WorkflowCard
@@ -578,11 +577,13 @@ function BranchRcaCard(props: {
 }
 
 function ApprovalGateCard({
+  index,
   approvalId,
   onOpen,
   status = approvalId ? 'running' : 'pending',
   metrics,
 }: {
+  index: number;
   approvalId: string;
   onOpen?: () => void;
   status?: NodeStatus;
@@ -600,9 +601,14 @@ function ApprovalGateCard({
     <Box className={`approval-gate ${onOpen ? 'clickable' : ''}`} onClick={onOpen}>
       <Box className={`approval-gate-card${status === 'failed' ? ' failed-gate' : ''}`}>
         <Box className="approval-gate-icon"><SecurityOutlinedIcon /></Box>
-        <Box>
-          <Typography className="workflow-card-title">Human Approval</Typography>
-          <Typography className="workflow-card-subtitle">{subtitleText}</Typography>
+        <Box className="workflow-card-body">
+          <Box className="workflow-card-head">
+            <Box className="step-badge">{index}</Box>
+            <Box>
+              <Typography className="workflow-card-title">Human Approval</Typography>
+              <Typography className="workflow-card-subtitle">{subtitleText}</Typography>
+            </Box>
+          </Box>
           <Box className="workflow-card-metrics approval-metrics">
             {metrics.map((metric) => <MetricItem key={metric} metric={metric} />)}
           </Box>
@@ -643,8 +649,8 @@ function openSourceCreatePage(platform?: { source: string; instance_url?: string
 function BottomNotificationRow({ source, node, completed = false }: { source: string; node: DisplayNode; completed?: boolean }) {
   const channel = notificationChannel(source);
   const alternates = notificationAlternates(source);
-  const baseIndex = node.index + 3;  // 7+1=8 approval(inline), 7+1=8 verif, 7+2=9 response, 7+3=10 notifications
-  // Notifications: Fix Agent=7, Verification=8, Response Builder=9, Notifications=10,11,12
+  const baseIndex = node.index + 3;
+  // Fix Agent=8, Verification=9, Response Builder=10, Notifications=11,12,13.
   return (
     <Box className="bottom-notifications">
       <WorkflowCard
@@ -769,6 +775,14 @@ function routeLevel(execution: ReturnType<typeof deriveExecution>) {
   return normaliseStatus(execution.categorisation.support_level || execution.categorisation.level || execution.categorisation.rca_level);
 }
 
+function normaliseAgentType(value: unknown) {
+  const agent = String(value || '').trim().toLowerCase();
+  if (!agent) return undefined;
+  if (agent === 'codefix' || agent === 'codefix_agent' || agent === 'code_fix_agent') return 'code_fix';
+  if (agent === 'db_fix_agent' || agent === 'database_fix_agent') return 'db_fix';
+  return agent;
+}
+
 function percentMetric(label: string, value: unknown) {
   if (typeof value !== 'number') return undefined;
   return `${label} ${Math.round(value <= 1 ? value * 100 : value)}%`;
@@ -888,6 +902,7 @@ function formatDurationSummary(value: unknown) {
 function buildDisplayNodes(
   nodes: WorkflowNode[],
   execution: ReturnType<typeof deriveExecution>,
+  displaySource: string,
   latestApproval?: RemediationPlan,
   selectedApproval?: RemediationPlan,
 ) {
@@ -909,6 +924,12 @@ function buildDisplayNodes(
   const fixFailed = isFailedStatus(dbStatus) || isFailedStatus(codefixStatus);
   const isL3 = level === 'L3';
   const isL2 = level === 'L2';
+  const configuredAgent = firstValue(
+    execution.fixAgent.agent_type,
+    execution.dbExecution.agent,
+    execution.rca.recommended_agent,
+  );
+  const agentType = normaliseAgentType(configuredAgent) || (isL3 ? 'code_fix' : undefined);
 
   statusById.set('connector', hasExecution ? 'completed' : 'pending');
   statusById.set('normalizer', hasExecution ? 'completed' : 'pending');
@@ -934,11 +955,11 @@ function buildDisplayNodes(
 
   // Fixed step map so numbering is always sequential and gapless:
   // 1=Source, 2=Connector, 3=Normalizer, 4=Guardrails, 5=Categorization,
-  // 6=L2/L3 branch, 7=Fix Agent, 8=Human Approval (inline), 9=Verification,
-  // 10=Response Builder, 11/12/13=Notifications
+  // 6=L2/L3 branch, 7=Human Approval, 8=Fix Agent, 9=Verification,
+  // 10=Response Builder, 11/12/13=Notifications.
   const fixedIndexMap: Record<string, number> = {
     connector: 2, normalizer: 3, guardrails: 4, security_guardrails: 4,
-    categorization: 5, db_fix: 7,
+    categorization: 5, db_fix: 8,
   };
 
   const config: DisplayNode[] = nodes.map((node) => {
@@ -952,15 +973,15 @@ function buildDisplayNodes(
       title: node.label,
       subtitle: node.service,
       icon: iconForNode(id),
-      metrics: metricsForNode(id, execution),
+      metrics: metricsForNode(id, execution, displaySource),
       accent: accentForNode(id),
       downstream: id !== 'db_fix',
       approvalId: id === 'db_fix' ? latestApproval?.approval_id ?? selectedApproval?.approval_id ?? String(execution.fixAgent.approval_id || '') : '',
       approvalStatus,
       l2Status,
       l3Status,
-      l2Metrics: metricsForNode('l2_rca', execution),
-      l3Metrics: metricsForNode('l3_rca', execution),
+      l2Metrics: metricsForNode('l2_rca', execution, displaySource),
+      l3Metrics: metricsForNode('l3_rca', execution, displaySource),
       dbVerification: execution.dbVerification,
       dbMetrics: execution.dbMetrics,
       dbExecution: execution.dbExecution,
@@ -969,6 +990,7 @@ function buildDisplayNodes(
       l3Rca: execution.l3Rca,
       codefix: execution.codefix,
       normalised: execution.normalised,
+      agentType,
       followupStatus,
       routeLevel: level,
     };
@@ -977,13 +999,13 @@ function buildDisplayNodes(
   return config.filter((node) => ['connector', 'normalizer', 'guardrails', 'categorization', 'db_fix'].includes(node.id));
 }
 
-function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution>) {
+function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution>, displaySource: string) {
   if (id === 'connector') {
     const metrics = compactMetrics([
       textMetric('Payload', execution.response.source_event_id || execution.normalised.source_event_id ? 'Received' : undefined),
       textMetric('Validation', execution.response.validation_status || execution.response.auth_status || (hasRecordData(execution.response) ? 'Passed' : undefined)),
       textMetric('Event', execution.response.source_event_id || execution.normalised.source_event_id),
-      textMetric('Source', sourceLabel(sourceKey(execution.normalised.source || execution.response.source))),
+      textMetric('Source', sourceLabel(sourceKey(execution.normalised.source || execution.response.source || displaySource))),
     ]);
     return metrics.length ? metrics.slice(0, 3) : ['Waiting for backend connector result'];
   }
@@ -1010,6 +1032,7 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
   }
   if (id === 'l2_rca') {
     const level = routeLevel(execution);
+    if (!level) return ['Waiting for categorization result'];
     if (level !== 'L2') {
       return compactMetrics([
         textMetric('Status', 'Skipped'),
@@ -1028,6 +1051,7 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
   }
   if (id === 'l3_rca') {
     const level = routeLevel(execution);
+    if (!level) return ['Waiting for categorization result'];
     if (level !== 'L3') {
       return compactMetrics([
         textMetric('Status', 'Skipped'),
@@ -1130,7 +1154,8 @@ function sourceLabel(source: string) {
   return 'ServiceNow';
 }
 
-function sourceMetrics(platform: SourcePlatform, execution: ReturnType<typeof deriveExecution>) {
+function sourceMetrics(platform: SourcePlatform, execution: ReturnType<typeof deriveExecution>, includeExecution: boolean) {
+  if (!includeExecution) return [`Source ${sourceLabel(sourceKey(platform.source))}`];
   const metrics = compactMetrics([
     textMetric('Incident ID', firstValue(execution.normalised.incident_id, execution.normalised.external_id, execution.categorisation.ticket_id, execution.response.event_id, execution.response.source_event_id)),
     textMetric('Priority', firstValue(execution.normalised.priority, execution.categorisation.priority)),
