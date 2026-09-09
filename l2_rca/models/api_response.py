@@ -1,6 +1,6 @@
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 try:
     from l2_rca.telemetry.explainability import Explanation
@@ -33,5 +33,6 @@ class APIResponse(BaseModel):
     explanation: Optional[Explanation] = None
     execution: Optional[ExecutionBlock] = None
     metrics: Optional[MetricsBlock] = None
+    token_usage_details: dict[str, Any] = Field(default_factory=dict)
     message: str = ""
     data: Optional[Any] = None

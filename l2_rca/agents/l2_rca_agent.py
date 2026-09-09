@@ -14,6 +14,7 @@ from l2_rca.telemetry.logger import tlog
 from l2_rca.telemetry.explainability import build_explanation
 from l2_rca.telemetry.metrics import RequestMetrics
 from l2_rca.telemetry.execution_logger import ExecutionLogger
+from observability.token_usage import track_usage
 
 _xlog = ExecutionLogger("L2 RCA Agent")
 
@@ -26,6 +27,7 @@ class L2RCAAgent:
         self.report_service = ReportService()
         self.agent_executor = AgentExecutor()
 
+    @track_usage(field="token_usage_details")
     def analyze(self, incident: IncidentRequest) -> APIResponse:
 
         trace_id = get_trace_id() or new_trace_id()

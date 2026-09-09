@@ -22,7 +22,7 @@ import subprocess
 import time
 from typing import List, Optional
 from urllib.parse import urlparse, urlunparse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 from langchain.agents import create_agent
 from github import Github, GithubException
@@ -34,6 +34,7 @@ from agents.skill_loader import build_skill_prompt
 from tools.file_tool import read_file, read_file_range, write_fix, get_token_count, reset_tool_context, set_tool_context
 from tools.neo4j_tool import get_connected_files, get_function_calls, get_file_summary
 from observability.agent_trace import log_agent_event, make_evidence_record, trace_span
+from observability.token_usage import track_usage, usage_config
 from governance.approvals import RemediationPlan, approval_store
 from governance.telemetry import emit_governance_event
 
@@ -58,6 +59,7 @@ class CodeFixResult(BaseModel):
     verification_summary: str = ""
     verification_records: List[dict] = []
     error: Optional[str] = None
+    token_usage: dict = Field(default_factory=dict)
 
 
 # -- Git helpers ---------------------------------------------------------------
@@ -346,6 +348,7 @@ If you could not safely apply a patch, output ONLY this JSON:
 No extra text before or after the JSON."""
 
 
+@track_usage
 def run_code_fix(
     event: ErrorEvent,
     rca: RCAResult,
@@ -597,7 +600,7 @@ Apply the fix and return your JSON summary. If the safest edit seems to be outsi
             ):
                 result = agent.invoke({
                     "messages": [HumanMessage(content=user_message)]
-                })
+                }, config=usage_config())
         finally:
             reset_tool_context(repo_token, knowledge_token)
 

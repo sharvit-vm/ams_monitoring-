@@ -26,13 +26,13 @@ _pinecone_index = None
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
-    model="gpt-4o-mini",
+    model="gpt-5-mini",
     temperature=0,
     api_key=OPENAI_API_KEY,
 )
 
 agent_llm = ChatOpenAI(
-    model="gpt-4o-mini",
+    model="gpt-5-mini",
     temperature=0,
     api_key=OPENAI_API_KEY,
 )

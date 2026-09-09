@@ -11,7 +11,8 @@ export function deriveExecution(raw: unknown) {
   const categorisation = asRecord(response.categorisation);
   const normalised = asRecord(response.normalised_event);
   const l2 = asRecord(response.l2_rca);
-  const l2Response = asRecord(l2.response);
+  const nestedL2Response = asRecord(l2.response);
+  const l2Response = Object.keys(nestedL2Response).length ? nestedL2Response : l2;
   const l2Data = asRecord(l2Response.data);
   const rca = asRecord(l2Data.rca);
   const fixAgent = asRecord(response.fix_agent);
@@ -23,6 +24,7 @@ export function deriveExecution(raw: unknown) {
   const dbVerification = asRecord(dbExecution.verification);
   const dbExplanation = asRecord(dbExecution.explanation);
   const l2Metrics = asRecord(l2Response.metrics);
+  const tokenUsage = asRecord(response.token_usage);
 
   return {
     response,
@@ -35,6 +37,7 @@ export function deriveExecution(raw: unknown) {
     fixAgentExecution,
     l3Rca,
     codefix,
+    tokenUsage,
     dbExecution,
     dbMetrics,
     dbVerification,
@@ -87,7 +90,8 @@ export type ObservabilityMetric = {
 export function collectOverallMetrics(raw: unknown): ObservabilityMetric[] {
   const response = asRecord(raw);
   const l2 = asRecord(response.l2_rca);
-  const l2Response = asRecord(l2.response);
+  const nestedL2Response = asRecord(l2.response);
+  const l2Response = Object.keys(nestedL2Response).length ? nestedL2Response : l2;
   const l2Execution = asRecord(l2.execution);
   const fixAgent = asRecord(response.fix_agent);
   const fixAgentExecution = asRecord(fixAgent.execution_result);
@@ -188,7 +192,8 @@ function deriveExecutionParts(raw: unknown) {
   const categorisation = asRecord(response.categorisation);
   const normalised = asRecord(response.normalised_event);
   const l2 = asRecord(response.l2_rca);
-  const l2Response = asRecord(l2.response);
+  const nestedL2Response = asRecord(l2.response);
+  const l2Response = Object.keys(nestedL2Response).length ? nestedL2Response : l2;
   const l2Data = asRecord(l2Response.data);
   const rca = asRecord(l2Data.rca);
   const fixAgent = asRecord(response.fix_agent);

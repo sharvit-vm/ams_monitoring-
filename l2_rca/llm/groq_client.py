@@ -7,6 +7,7 @@ from groq import Groq
 from l2_rca.config.settings import settings
 from l2_rca.llm.prompts import SYSTEM_PROMPT
 from l2_rca.telemetry.logger import tlog
+from observability.token_usage import provider_call
 
 MODEL = "llama-3.3-70b-versatile"
 
@@ -89,7 +90,7 @@ class GroqClient:
             return fallback, latency_ms, 0
 
         try:
-            response = self.client.chat.completions.create(
+            response = provider_call(self.client.chat.completions.create,
                 model=MODEL,
                 temperature=0,
                 messages=[

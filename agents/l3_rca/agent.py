@@ -30,6 +30,7 @@ from observability.agent_trace import (
     make_evidence_record,
     trace_span,
 )
+from observability.token_usage import track_usage, usage_config
 
 
 L3_RCA_TOOLS = [
@@ -369,6 +370,7 @@ def _fallback_result(event: ErrorEvent, error: Exception) -> L3RCAResult:
     )
 
 
+@track_usage
 def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") -> L3RCAResult:
     """
     Run the L3 RCA agent for a code-level incident.
@@ -454,7 +456,7 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
                 )
                 result = agent.invoke({
                     "messages": [HumanMessage(content=_build_user_message(event, knowledge_id, prefetch_context))]
-                })
+                }, config=usage_config())
             finally:
                 reset_tool_context(repo_token, knowledge_token)
 

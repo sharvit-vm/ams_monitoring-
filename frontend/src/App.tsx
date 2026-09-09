@@ -385,6 +385,7 @@ function MetricItem({ metric }: { metric: string }) {
     'Delivery',
     'Target',
     'PR',
+    'LLM Tokens',
   ];
   const label = knownLabels.find((item) => metric === item || metric.startsWith(`${item} `));
   if (!label || metric === label) {
@@ -805,6 +806,38 @@ function compactMetrics(metrics: Array<string | undefined>) {
   return metrics.filter(Boolean) as string[];
 }
 
+function tokenMetricValue(usage: unknown, fallback?: unknown) {
+  if (typeof usage === 'number') return `LLM Tokens ${usage.toLocaleString()}`;
+  const value = asRecord(usage);
+  const total = firstValue(value.total_tokens, asRecord(value.tokens).total, fallback);
+  if (typeof total === 'number') {
+    const suffix = value.measurement === 'partial' ? ' (Partial)' : '';
+    return `LLM Tokens ${total.toLocaleString()}${suffix}`;
+  }
+  if (Number(value.calls || 0) > 0) return 'LLM Tokens Unavailable';
+  if (value.measurement === 'not_used') return 'LLM Tokens 0';
+  return undefined;
+}
+
+function combinedTokenMetric(...usages: unknown[]) {
+  const present = usages.map(asRecord).filter((usage) => Object.keys(usage).length);
+  if (!present.length) return undefined;
+  let total = 0;
+  let hasTotal = false;
+  let unavailableCall = false;
+  for (const usage of present) {
+    const value = firstValue(usage.total_tokens, asRecord(usage.tokens).total);
+    if (typeof value === 'number') {
+      total += value;
+      hasTotal = true;
+    } else if (Number(usage.calls || 0) > 0) {
+      unavailableCall = true;
+    }
+  }
+  if (!hasTotal) return unavailableCall ? 'LLM Tokens Unavailable' : 'LLM Tokens 0';
+  return `LLM Tokens ${total.toLocaleString()}${unavailableCall ? ' (Partial)' : ''}`;
+}
+
 function firstValue(...values: unknown[]) {
   return values.find((value) => value !== undefined && value !== null && value !== '');
 }
@@ -969,6 +1002,7 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
     const metrics = compactMetrics([
       percentMetric('Confidence', execution.categorisation.confidence),
       level ? `Support Level ${level}` : undefined,
+      tokenMetricValue(execution.tokenUsage.categorisation || execution.categorisation.token_usage),
       textMetric('Category', titleCaseValue(execution.categorisation.category || execution.categorisation.issue_category)),
       textMetric('Agent', execution.categorisation.selected_agent),
     ]);
@@ -986,6 +1020,8 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
     const metrics = compactMetrics([
       percentMetric('Confidence', execution.l2Response.confidence || execution.rca.confidence),
       durationMetric('LLM Latency', asRecord(execution.l2Response.metrics).llm_latency_ms || asRecord(execution.l2Response.execution).duration_ms || asRecord(execution.l2Response.metrics).duration_ms),
+      tokenMetricValue(execution.tokenUsage.l2_rca || execution.l2Response.token_usage_details,
+        asRecord(execution.l2Response.metrics).token_usage),
       textMetric('Decision', execution.l2Response.decision || execution.rca.recommended_agent || execution.rca.problem_domain),
     ]);
     return metrics.length ? metrics : ['Waiting for L2 RCA result'];
@@ -1002,6 +1038,7 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
     const metrics = compactMetrics([
       textMetric('Status', execution.l3Rca.status || (hasRecordData(execution.l3Rca) ? 'Completed' : execution.response.status)),
       percentMetric('Confidence', execution.l3Rca.confidence_score || execution.l3Rca.confidence),
+      combinedTokenMetric(execution.tokenUsage.l3_context, execution.tokenUsage.l3_rca || execution.l3Rca.token_usage),
       textMetric('Evidence', shortValue(firstValue(execution.l3Rca.buggy_file, execution.normalised.file_path), 36)),
       textMetric('Route', 'L3'),
     ]);
@@ -1013,6 +1050,7 @@ function metricsForNode(id: string, execution: ReturnType<typeof deriveExecution
       const metrics = compactMetrics([
         textMetric('Target Agent', execution.fixAgent.agent_type || 'code_fix'),
         textMetric('Status', firstValue(execution.codefix.status, execution.fixAgent.status, execution.response.status)),
+        tokenMetricValue(execution.tokenUsage.codefix || execution.codefix.token_usage || execution.fixAgentExecution.token_usage),
         textMetric('PR', shortValue(firstValue(execution.codefix.pr_url, execution.codefix.pull_request_url, execution.fixAgentExecution.pr_url), 36)),
         textMetric('Approval', execution.fixAgent.approval_status || execution.fixAgent.status),
       ]);

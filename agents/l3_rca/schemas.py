@@ -16,3 +16,4 @@ class L3RCAResult(BaseModel):
     reasoning: str
     evidence: List[str] = Field(default_factory=list)
     evidence_records: List[dict] = Field(default_factory=list)
+    token_usage: dict = Field(default_factory=dict)

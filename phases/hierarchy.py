@@ -13,6 +13,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from models import FileInfo, LevelNode, PipelineState, RepoSummary
 from config import CACHE_DIR, MAX_HIERARCHY_LEVELS, llm
+from observability.token_usage import usage_config
 prompt = PromptTemplate.from_template("""
 You are analyzing a folder in a software repository.
 Folder: {folder_path}
@@ -59,7 +60,7 @@ def summarize_folder(folder_path: str, child_summaries: List[str], languages: Li
             "languages": ", ".join(languages) or "unknown",
             "file_count": file_count,
             "child_summaries": "\n".join(f"- {s}" for s in child_summaries[:12]) or "no summaries available",
-        })
+        }, config=usage_config())
         return result.get("summary"), result.get("purpose")
     except Exception as e:
         print(f"\n  [Error] folder {folder_path}: {e}")

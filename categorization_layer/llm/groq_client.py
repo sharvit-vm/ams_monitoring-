@@ -3,6 +3,7 @@
 from dotenv import load_dotenv
 
 from groq import Groq
+from observability.token_usage import provider_call
 
 load_dotenv()
 
@@ -51,7 +52,7 @@ class GroqClient:
 
             )
 
-        response = self.client.chat.completions.create(
+        response = provider_call(self.client.chat.completions.create,
 
             model=self.model,
 

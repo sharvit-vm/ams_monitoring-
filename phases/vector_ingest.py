@@ -15,6 +15,7 @@ from openai import OpenAI
 
 from models import PipelineState
 from config import OPENAI_API_KEY, EMBEDDING_MODEL, MAX_CHUNK_TOKENS, get_pinecone_index
+from observability.token_usage import provider_call
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 tokenizer = tiktoken.encoding_for_model("text-embedding-3-small")
 
@@ -93,7 +94,7 @@ def build_chunks(file_info, max_tokens: int) -> List[dict]:
     ]
 
 def embed(texts: List[str]) -> List[List[float]]:
-    response = openai_client.embeddings.create(
+    response = provider_call(openai_client.embeddings.create,
         model=EMBEDDING_MODEL,
         input=texts,
     )

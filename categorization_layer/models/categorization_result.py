@@ -1,9 +1,11 @@
 ﻿from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CategorizationResult(BaseModel):
+
+    token_usage: dict = Field(default_factory=dict)
 
     ticket_id: Optional[str] = None
 

@@ -10,6 +10,7 @@ from db_fix.utils.logger import logger
 from dashboard_state import latest_execution, record_execution
 from governance.approvals import approval_store
 from governance.telemetry import emit_governance_event
+from observability.token_usage import workflow_usage
 
 
 router = APIRouter(
@@ -64,6 +65,7 @@ def _record_remediation_dashboard_update(plan) -> None:
                     if isinstance(data, dict):
                         data["execution"] = plan.execution_result
     response["status"] = plan.status
+    response["token_usage"] = workflow_usage(response)
     record_execution(response)
 
 @health_router.get("/health")

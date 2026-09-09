@@ -12,6 +12,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from models import FileInfo, PipelineState
 from config import CACHE_DIR, OPENAI_API_KEY
 from phases.file_analysis import get_file_cache_dir, get_cache_key, load_file_cache, save_file_cache
+from observability.token_usage import usage_config
 
 llm = ChatOpenAI(
     model="gpt-4o-mini",
@@ -51,7 +52,7 @@ def should_skip(f: FileInfo) -> bool:
     return False
 
 
-def _analyse_file(file_info: FileInfo) -> tuple[FileInfo, bool, str | None]:
+def _analyse_file(file_info: FileInfo, llm_config: dict | None = None) -> tuple[FileInfo, bool, str | None]:
     try:
         result = chain.invoke({
             "file_path": file_info.path,
@@ -59,7 +60,7 @@ def _analyse_file(file_info: FileInfo) -> tuple[FileInfo, bool, str | None]:
             "imports": ", ".join(i.module or i.raw for i in file_info.imports[:10]) or "none",
             "classes": ", ".join(c.name for c in file_info.classes[:8]) or "none",
             "functions": ", ".join(fn.name for fn in file_info.functions[:15]) or "none",
-        })
+        }, config=llm_config or {})
         file_info.summary = result.get("summary")
         file_info.purpose = result.get("purpose")
         file_info.llm_processed = True
@@ -83,11 +84,12 @@ def analyze_with_llm(state: PipelineState) -> PipelineState:
     success, failed = 0, 0
     print(f"[LLMAnalysis] Parallel workers : {MAX_WORKERS}")
     print(f"[LLMAnalysis] Batch size       : {BATCH_SIZE}")
+    llm_config = usage_config()
 
     with tqdm(total=len(to_process), desc="Generating summaries") as progress:
         for batch in _chunks(to_process, BATCH_SIZE):
             with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch))) as executor:
-                futures = [executor.submit(_analyse_file, file_info) for file_info in batch]
+                futures = [executor.submit(_analyse_file, file_info, llm_config) for file_info in batch]
                 for future in as_completed(futures):
                     file_info, ok, error = future.result()
                     if ok:

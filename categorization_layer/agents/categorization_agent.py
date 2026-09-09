@@ -83,6 +83,7 @@ from categorization_layer.llm.incident_classifier import (
 from categorization_layer.services.decision_merger import (
     merge_decision
 )
+from observability.token_usage import track_usage
 
 logger = get_logger(__name__)
 AUTO_ROUTE_L2_WITHOUT_HUMAN_REVIEW = (
@@ -453,6 +454,7 @@ def _has_code_evidence(payload):
     )
 
 
+@track_usage
 def categorize(payload):
 
     logger.info("=" * 60)

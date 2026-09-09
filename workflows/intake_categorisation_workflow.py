@@ -15,6 +15,7 @@ from agents.code_fix import run_code_fix
 from agents.l3_rca import run_l3_rca
 from categorisation_adapter import categorise_error_event
 from dashboard_state import record_execution
+from observability.token_usage import usage_scope, workflow_usage
 from issuelayer.connectors.base import log_graph_stage, log_intake_snapshot, normalised_event_log_payload
 from issuelayer.intake.normalizers.router import normalise_source_event
 from issuelayer.intake.schemas import ErrorEvent
@@ -58,6 +59,7 @@ class IntakeCategorisationState(TypedDict, total=False):
     l3_rca_result: Any
     rca_report_path: str
     codefix_result: Any
+    l3_context_token_usage: dict[str, Any]
     status: str
     reason: str
     response: dict[str, Any]
@@ -596,13 +598,16 @@ def build_intake_categorisation_workflow():
         print(f"[graph] L3 context preparation started; event={event.id}, repo={event.repo_full_name}")
         repo_dir = _ensure_repo_checkout(event)
         _resolve_event_path(event, repo_dir)
-        _ingest_repo_for_rca(repo_dir, knowledge_id)
+        with usage_scope() as collector:
+            _ingest_repo_for_rca(repo_dir, knowledge_id)
+        context_token_usage = collector.snapshot()
         print(f"[graph] L3 context ready; event={event.id}, repo_dir={repo_dir}, knowledge_id={knowledge_id}")
         return {
             **state,
             "knowledge_id": knowledge_id,
             "repo_dir": repo_dir,
             "status": "ready_for_l3_rca",
+            "l3_context_token_usage": context_token_usage,
         }
 
     def l3_rca_node(state: IntakeCategorisationState) -> IntakeCategorisationState:
@@ -678,8 +683,10 @@ def build_intake_categorisation_workflow():
             "l3_rca": l3_rca.model_dump() if hasattr(l3_rca, "model_dump") else l3_rca,
             "l3_rca_report_path": state.get("rca_report_path"),
             "codefix": codefix.model_dump() if hasattr(codefix, "model_dump") else codefix,
+            "l3_context_token_usage": state.get("l3_context_token_usage"),
             "reason": state.get("reason"),
         }
+        response["token_usage"] = workflow_usage(response)
         return {**state, "response": response}
 
     def route_after_normalizer(state: IntakeCategorisationState) -> str:
