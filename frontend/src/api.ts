@@ -49,6 +49,7 @@ export type SourcePlatform = {
   instance_url?: string;
   project_url?: string;
   repo_url?: string;
+  create_url?: string;
 };
 
 export type WorkflowResponse = {

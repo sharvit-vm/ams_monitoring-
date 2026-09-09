@@ -172,6 +172,7 @@ def _dashboard_source_platforms() -> list[dict[str, Any]]:
         or os.getenv("JIRA_BASE_URL")
         or os.getenv("JIRA_URL")
     )
+    jira_create_issue_url = os.getenv("JIRA_CREATE_ISSUE_URL")
     github_instance = os.getenv("GITHUB_REPOSITORY_URL") or os.getenv("GITHUB_URL")
     platforms = [
         {
@@ -186,7 +187,8 @@ def _dashboard_source_platforms() -> list[dict[str, Any]]:
             "label": "Jira",
             "source": "jira",
             "instance_url": jira_instance,
-            "configured_url": bool(jira_instance),
+            "create_url": jira_create_issue_url,
+            "configured_url": bool(jira_instance or jira_create_issue_url),
         },
         {
             "id": "github",

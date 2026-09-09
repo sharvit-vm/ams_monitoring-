@@ -619,8 +619,9 @@ function ApprovalGateCard({
   );
 }
 
-function getSourceCreateUrl(platform?: { source: string; instance_url?: string | null; project_url?: string | null; repo_url?: string | null }) {
+function getSourceCreateUrl(platform?: SourcePlatform) {
   if (!platform) return;
+  if (platform.create_url) return platform.create_url;
   const normalizedSource = sourceKey(platform.source);
   const baseUrl =
     platform.instance_url
@@ -640,7 +641,7 @@ function getSourceCreateUrl(platform?: { source: string; instance_url?: string |
   return url;
 }
 
-function openSourceCreatePage(platform?: { source: string; instance_url?: string | null; project_url?: string | null; repo_url?: string | null }) {
+function openSourceCreatePage(platform?: SourcePlatform) {
   const url = getSourceCreateUrl(platform);
   if (!url) return;
   window.open(url, '_blank', 'noopener,noreferrer');
