@@ -20,6 +20,8 @@ def expand_graph_context(candidate: EvidenceCandidate | None, knowledge_id: str,
     file_path = candidate.file_path
     graph_context = {
         "status": "completed",
+        "evidence_kind": "static_relationships",
+        "proves_runtime_execution": False,
         "seed": candidate.model_dump(mode="json"),
         "file_summary": _invoke_tool(get_file_summary, {"file_path": file_path, "knowledge_id": knowledge_id}),
         "folder_context": _invoke_tool(get_folder_context, {"file_path": file_path, "knowledge_id": knowledge_id}),
@@ -42,6 +44,14 @@ def expand_graph_context(candidate: EvidenceCandidate | None, knowledge_id: str,
                 "knowledge_id": knowledge_id,
             },
         )
+
+    errors = [key for key in ("file_summary", "folder_context", "function_calls")
+              if isinstance(graph_context.get(key), dict) and graph_context[key].get("error")]
+    if graph_context.get("connected_files_error"):
+        errors.append("connected_files")
+    if errors:
+        graph_context["status"] = "partial"
+        graph_context["failed_lookups"] = errors
 
     return graph_context
 

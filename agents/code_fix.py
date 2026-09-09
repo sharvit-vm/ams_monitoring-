@@ -30,6 +30,7 @@ from github import Github, GithubException
 from config import agent_llm
 from issuelayer.intake.schemas import ErrorEvent
 from agents.rca import RCAResult
+from agents.l3_rca.validation import remediation_block_reason
 from agents.skill_loader import build_skill_prompt
 from tools.file_tool import read_file, read_file_range, write_fix, get_token_count, reset_tool_context, set_tool_context
 from tools.neo4j_tool import get_connected_files, get_function_calls, get_file_summary
@@ -369,6 +370,13 @@ def run_code_fix(
         file=getattr(rca, "buggy_file", event.file_path),
         confidence=rca_confidence,
     )
+
+    readiness_error = remediation_block_reason(rca)
+    if readiness_error:
+        log_agent_event(agent="codefix", stage="precheck", status="blocked",
+                        event_id=event.id, incident_id=incident_id, summary=readiness_error)
+        return CodeFixResult(success=False, status="BLOCKED", error=readiness_error,
+                             confidence=rca_confidence, verification_summary=readiness_error)
 
     if not GITHUB_TOKEN:
         log_agent_event(
@@ -837,7 +845,9 @@ Apply the fix and return your JSON summary. If the safest edit seems to be outsi
 def _execute_code_fix_plan(plan: RemediationPlan) -> dict:
     context = plan.execution_context
     event = ErrorEvent(**context["event"])
-    rca = RCAResult(**context["rca"])
+    from agents.l3_rca.schemas import L3RCAResult
+    report_model = L3RCAResult if "analysis_facts" in context["rca"] else RCAResult
+    rca = report_model(**context["rca"])
     result = run_code_fix(
         event,
         rca,

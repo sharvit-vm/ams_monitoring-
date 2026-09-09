@@ -71,11 +71,17 @@ def resolve_traceback_frames(traceback: str, repo_dir: str) -> list[TracebackFra
     for path in root.rglob("*"):
         if not path.is_file() or ".git" in path.parts:
             continue
+        try:
+            path.resolve().relative_to(root)
+        except ValueError:
+            continue
         relative = path.relative_to(root).as_posix()
         files_by_name.setdefault(path.name.lower(), []).append(relative)
 
     for frame in frames:
-        hint = frame.file_hint.replace("\\", "/").lstrip("./")
+        hint = frame.file_hint.replace("\\", "/")
+        if ".." in Path(hint).parts:
+            continue
         direct = (root / hint).resolve()
         try:
             direct.relative_to(root)
@@ -86,8 +92,10 @@ def resolve_traceback_frames(traceback: str, repo_dir: str) -> list[TracebackFra
             continue
         matches = files_by_name.get(Path(hint).name.lower(), [])
         class_suffix = frame.class_name.replace(".", "/") if frame.class_name else ""
-        qualified_matches = [candidate for candidate in matches if class_suffix and class_suffix in candidate.replace("\\", "/")]
-        frame.file_path = qualified_matches[0] if qualified_matches else matches[0] if len(matches) == 1 else ""
+        qualified_matches = [candidate for candidate in matches if class_suffix and class_suffix in candidate]
+        suffix_matches = [candidate for candidate in matches if candidate.endswith("/" + hint.removeprefix("./"))]
+        candidates = qualified_matches or suffix_matches or matches
+        frame.file_path = candidates[0] if len(candidates) == 1 else ""
     return frames
 
 
@@ -106,6 +114,22 @@ def build_incident_query(event: ErrorEvent) -> str:
         " ".join(event.components or []),
     ]
     return "\n".join(part.strip() for part in parts if part and str(part).strip())
+
+
+def incident_evidence_context(event: ErrorEvent) -> dict:
+    """Keep supplied runtime claims distinct from retrieval and static call graphs."""
+    frames = parse_traceback_frames(event.traceback)
+    return {
+        "evidence_kind": "supplied_incident",
+        "reported_frames": [frame.model_dump(mode="json") for frame in frames],
+        "frame_order": "as_supplied; stack conventions vary; no synthetic caller edges added",
+        "trace_completeness": "unknown",
+        "runtime_independently_verified": False,
+        "location_hint": {"file_path": event.file_path, "function_name": event.function_name,
+                          "line_number": event.line_number},
+        "interpretation": "These frames report the incident path. Neo4j relationships describe possible paths only. "
+                          "Absence from an incomplete trace does not prove a call never occurred.",
+    }
 
 
 def has_strong_traceback_location(event: ErrorEvent) -> bool:

@@ -62,11 +62,65 @@ class RCARuntimeTests(unittest.TestCase):
             affected_files=["src\\controller\\ClientController.java"],
             fix_suggestion="Add input validation in ClientController before calling findByEmail.",
             confidence="high", reasoning="test", evidence=[],
+            analysis_facts={
+                "observed_value_or_state": "null email",
+                "representation_or_type": "null",
+                "execution_path": ["ClientController -> findByEmail -> trim"],
+                "failure_mechanism": "trim is called on null",
+                "expected_behavior": "validate email before trimming",
+                "source_evidence": ["ClientServiceImpl.java:49"],
+            },
         )
         warnings = _semantic_validation_warnings(event, {}, report)
         self.assertTrue(any("remediation location" in warning for warning in warnings))
         report.fix_suggestion = "Validate email in ClientServiceImpl before trim()."
         self.assertEqual(_semantic_validation_warnings(event, {}, report), [])
+
+    def test_source_backed_rca_requires_source_file_citation(self):
+        event = ErrorEvent(
+            id="test", fingerprint="test", error_type="ValueError", message="invalid value",
+            file_path="src/parser.py", line_number=12,
+        )
+        report = L3RCAResult(
+            root_cause="Invalid value reaches parser", buggy_file="src/parser.py",
+            buggy_function="parse", buggy_lines=[12], affected_files=[],
+            fix_suggestion="Validate the value before parsing.", confidence="medium",
+            reasoning="The parser receives an invalid value.", evidence=["source evidence"],
+            analysis_facts={
+                "observed_value_or_state": "invalid value",
+                "representation_or_type": "string",
+                "execution_path": ["caller -> parse -> conversion"],
+                "failure_mechanism": "conversion rejects the value",
+                "expected_behavior": "validate before conversion",
+                "source_evidence": ["other.py:12 - conversion call"],
+            },
+        )
+        warnings = _semantic_validation_warnings(
+            event, {"failing_range": "# File: src/parser.py\n12: parse(value)"}, report
+        )
+        self.assertTrue(any("verified failing source file" in warning for warning in warnings))
+
+    def test_complete_structured_reasoning_facts_are_accepted(self):
+        event = ErrorEvent(id="test", fingerprint="test", error_type="ValueError", message="invalid value")
+        report = L3RCAResult(
+            root_cause="Invalid value reaches parser", buggy_file="src/parser.py",
+            buggy_function="parse", buggy_lines=[12], affected_files=[],
+            fix_suggestion="Validate the value before parsing.", confidence="medium",
+            reasoning="The parser receives an invalid value.", evidence=["src/parser.py:12"],
+            analysis_facts={
+                "observed_value_or_state": "invalid value",
+                "representation_or_type": "string",
+                "execution_path": ["caller -> parse -> conversion"],
+                "failure_mechanism": "conversion rejects the value",
+                "expected_behavior": "validate before conversion",
+                "source_evidence": ["src/parser.py:12 - conversion call"],
+                "uncertainties": [],
+            },
+        )
+        warnings = _semantic_validation_warnings(
+            event, {"failing_range": "# File: src/parser.py\n12: parse(value)"}, report
+        )
+        self.assertEqual(warnings, [])
 
 
 if __name__ == "__main__":
