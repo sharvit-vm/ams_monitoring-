@@ -73,7 +73,14 @@ class ApprovalStore:
         with self._lock:
             self._executors[agent_type] = executor
 
-    def approve_and_execute(self, approval_id: str, *, approver: str, reason: str = "") -> RemediationPlan:
+    def approve_and_execute(
+        self,
+        approval_id: str,
+        *,
+        approver: str,
+        reason: str = "",
+        on_update: Callable[[RemediationPlan], None] | None = None,
+    ) -> RemediationPlan:
         with self._lock:
             plan = self._require_plan(approval_id)
             if plan.status not in {"WAITING_FOR_APPROVAL", "APPROVED"}:
@@ -84,10 +91,15 @@ class ApprovalStore:
             plan.updated_at = _now_iso()
             executor = self._executors.get(plan.agent_type)
 
+        if on_update:
+            on_update(plan)
+
         if executor is None:
             with self._lock:
                 plan.status = "APPROVED_NO_EXECUTOR"
                 plan.updated_at = _now_iso()
+            if on_update:
+                on_update(plan)
             return plan
 
         try:
@@ -98,14 +110,20 @@ class ApprovalStore:
                 result = {"result": result}
             with self._lock:
                 plan.execution_result = result
-                plan.status = str(result.get("status") or "EXECUTED")
+                reported_status = str(result.get("status") or "").strip()
+                execution_failed = result.get("success") is False or bool(result.get("error"))
+                plan.status = reported_status or ("EXECUTION_FAILED" if execution_failed else "EXECUTED")
                 plan.updated_at = _now_iso()
+            if on_update:
+                on_update(plan)
             return plan
         except Exception as exc:
             with self._lock:
                 plan.execution_result = {"status": "FAILED", "error": type(exc).__name__, "message": str(exc)}
                 plan.status = "EXECUTION_FAILED"
                 plan.updated_at = _now_iso()
+            if on_update:
+                on_update(plan)
             raise
 
     def reject(self, approval_id: str, *, approver: str, reason: str = "") -> RemediationPlan:

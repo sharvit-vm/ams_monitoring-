@@ -133,9 +133,12 @@ export function App() {
   }, [queryClient]);
 
   const approveMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedApproval) throw new Error('No approval selected');
-      return approveRemediation(selectedApproval.approval_id, approver, decisionNote);
+    mutationFn: async (decision: { approvalId: string; approver: string; reason: string }) => {
+      return approveRemediation(decision.approvalId, decision.approver, decision.reason);
+    },
+    onMutate: () => {
+      setSelectedApprovalId('');
+      setApprovalError('');
     },
     onSuccess: async () => {
       setDecisionNote('');
@@ -147,7 +150,8 @@ export function App() {
         queryClient.invalidateQueries({ queryKey: ['workflow'] }),
       ]);
     },
-    onError: (error) => {
+    onError: (error, decision) => {
+      setSelectedApprovalId(decision.approvalId);
       setApprovalError(error instanceof Error ? error.message : 'Approval failed');
     },
   });
@@ -290,7 +294,6 @@ export function App() {
                 key={node.id}
                 node={node}
                 source={selectedSourceKey}
-                selectedApprovalId={selectedApprovalId}
                 onSelectApproval={setSelectedApprovalId}
               />
             ))}
@@ -305,7 +308,14 @@ export function App() {
           onApproverChange={setApprover}
           onDecisionNoteChange={setDecisionNote}
           onClose={() => setSelectedApprovalId('')}
-          onApprove={() => approveMutation.mutate()}
+          onApprove={() => {
+            if (!selectedApproval) return;
+            approveMutation.mutate({
+              approvalId: selectedApproval.approval_id,
+              approver,
+              reason: decisionNote,
+            });
+          }}
           onReject={() => rejectMutation.mutate()}
           pending={approveMutation.isPending || rejectMutation.isPending}
           error={approvalError}
@@ -348,7 +358,19 @@ function WorkflowCard({
             <Typography className="workflow-card-title">{title}</Typography>
             <Typography className="workflow-card-subtitle">{subtitle}</Typography>
           </Box>
-          <StatusDot status={status} label={actionLabel} />
+          {actionLabel && onClickApproval ? (
+            <Button
+              className="source-action-btn"
+              onClick={(event) => {
+                event.stopPropagation();
+                onClickApproval();
+              }}
+            >
+              {actionLabel}
+            </Button>
+          ) : (
+            <StatusDot status={status} />
+          )}
         </Box>
         <Box className="workflow-card-metrics">
           {metrics.map((metric) => <MetricItem key={metric} metric={metric} />)}
@@ -420,12 +442,10 @@ function SummaryStat({ label, value }: { label: string; value: string | number }
 function NodeBlock({
   node,
   source,
-  selectedApprovalId,
   onSelectApproval,
 }: {
   node: DisplayNode;
   source: string;
-  selectedApprovalId: string;
   onSelectApproval: (value: string) => void;
 }) {
   if (node.id === 'categorization') {
@@ -476,16 +496,37 @@ function NodeBlock({
     const isCodeFixAgent = node.agentType === 'code_fix';
     const agentSubtitle = node.agentType || 'Awaiting agent selection';
     const agentIcon = isCodeFixAgent ? <CodeOutlinedIcon /> : node.icon;
-    const waiting = node.status !== 'completed' && node.status !== 'failed' && (node.approvalStatus === 'WAITING_FOR_APPROVAL' || Boolean(selectedApprovalId));
+    const approvalStatus = normaliseStatus(node.approvalStatus);
+    const awaitingApproval = isWaitingStatus(approvalStatus);
+    const approvalCompleted = [
+      'APPROVED',
+      'APPROVED_NO_EXECUTOR',
+      'EXECUTED',
+      'EXECUTION_FAILED',
+      'COMPLETED',
+      'SUCCESS',
+    ].includes(approvalStatus);
+    const remediationRunning = approvalStatus === 'APPROVED';
     const followupStatus = node.followupStatus ?? (node.status === 'completed' ? 'completed' : node.status === 'failed' ? 'skipped' : 'pending');
-    const approvalGateStatus: NodeStatus = node.status === 'failed' ? 'failed' : waiting ? 'running' : followupStatus;
+    const approvalGateStatus: NodeStatus = awaitingApproval
+      ? 'running'
+      : approvalCompleted
+      ? 'completed'
+      : approvalStatus === 'REJECTED'
+      ? 'failed'
+      : 'pending';
+    const fixAgentStatus: NodeStatus = awaitingApproval
+      ? 'pending'
+      : remediationRunning
+      ? 'running'
+      : node.status;
     return (
       <Box className="workflow-sequence">
         <Box className="connector-line" />
         <ApprovalGateCard
           index={node.index - 1}
           approvalId={node.approvalId}
-          onOpen={node.approvalId ? () => onSelectApproval(node.approvalId) : undefined}
+          onOpen={awaitingApproval && node.approvalId ? () => onSelectApproval(node.approvalId) : undefined}
           status={approvalGateStatus}
           metrics={approvalMetrics(node)}
         />
@@ -495,7 +536,7 @@ function NodeBlock({
           title="Fix Agent"
           subtitle={agentSubtitle}
           icon={agentIcon}
-          status={waiting ? 'pending' : node.status}
+          status={fixAgentStatus}
           metrics={node.metrics}
           accent={node.accent}
         />
@@ -908,7 +949,16 @@ function buildDisplayNodes(
   selectedApproval?: RemediationPlan,
 ) {
   const statusById = new Map<string, NodeStatus>();
-  const approvalStatus = latestApproval?.status || selectedApproval?.status || String(execution.fixAgent.status || execution.dbExecution.status || '');
+  const embeddedCodefixPlan = asRecord(execution.codefix.remediation_plan);
+  const approvalStatus = String(firstValue(
+    execution.fixAgent.status,
+    execution.codefix.approval_status,
+    embeddedCodefixPlan.status,
+    latestApproval?.status,
+    selectedApproval?.status,
+    execution.dbExecution.status,
+    execution.codefix.status,
+  ) || '');
   const hasExecution = hasRecordData(execution.response);
   const hasCategorisation = hasRecordData(execution.categorisation);
   const hasL2Result = hasRecordData(execution.l2) || hasRecordData(execution.l2Response) || hasRecordData(execution.rca);
@@ -918,7 +968,7 @@ function buildDisplayNodes(
   const hasDbResult = hasRecordData(execution.dbExecution);
   const level = routeLevel(execution);
   const dbStatus = firstValue(execution.dbExecution.overall_status, execution.dbExecution.status, execution.dbMetrics.overall_status, execution.dbVerification.status);
-  const codefixStatus = firstValue(execution.codefix.status, execution.fixAgent.status, execution.response.status);
+  const codefixStatus = firstValue(execution.fixAgent.status, execution.codefix.approval_status, execution.codefix.status, execution.response.status);
   const dbComplete = hasDbResult && (isCompleteStatus(dbStatus) || isCompleteStatus(execution.dbVerification.status) || execution.dbMetrics.verification_passed === true);
   const codefixComplete = (hasFixExecution || hasFixPlan) && (isCompleteStatus(codefixStatus) || Boolean(firstValue(execution.codefix.pr_url, execution.codefix.pull_request_url, execution.fixAgentExecution.pr_url)));
   const fixWaiting = isWaitingStatus(approvalStatus) || isWaitingStatus(execution.response.status) || isWaitingStatus(codefixStatus);
@@ -977,7 +1027,13 @@ function buildDisplayNodes(
       metrics: metricsForNode(id, execution, displaySource),
       accent: accentForNode(id),
       downstream: id !== 'db_fix',
-      approvalId: id === 'db_fix' ? latestApproval?.approval_id ?? selectedApproval?.approval_id ?? String(execution.fixAgent.approval_id || '') : '',
+      approvalId: id === 'db_fix' ? String(firstValue(
+        execution.fixAgent.approval_id,
+        execution.codefix.approval_id,
+        embeddedCodefixPlan.approval_id,
+        selectedApproval?.approval_id,
+        latestApproval?.approval_id,
+      ) || '') : '',
       approvalStatus,
       l2Status,
       l3Status,
@@ -1168,11 +1224,18 @@ function sourceMetrics(platform: SourcePlatform, execution: ReturnType<typeof de
 function approvalMetrics(node: DisplayNode) {
   const dbExecution = asRecord(node.dbExecution);
   const fixAgent = asRecord(node.fixAgent);
-  const approval = asRecord(dbExecution.approval || dbExecution.approval_request || fixAgent.approval || fixAgent.approval_request);
+  const codefix = asRecord(node.codefix);
+  const approval = asRecord(
+    dbExecution.approval
+    || dbExecution.approval_request
+    || fixAgent.approval
+    || fixAgent.approval_request
+    || codefix.remediation_plan
+  );
   const metrics = compactMetrics([
-    textMetric('Approval', node.approvalStatus || approval.status || fixAgent.status),
-    textMetric('Risk', firstValue(dbExecution.risk, dbExecution.risk_level, approval.risk, fixAgent.risk_level)),
-    textMetric('Approver', firstValue(approval.approver, dbExecution.approver, fixAgent.approver)),
+    textMetric('Approval', node.approvalStatus || approval.status || fixAgent.status || codefix.approval_status),
+    textMetric('Risk', firstValue(dbExecution.risk, dbExecution.risk_level, approval.risk, approval.risk_level, fixAgent.risk_level)),
+    textMetric('Approver', firstValue(approval.approved_by, approval.approver, fixAgent.approved_by, dbExecution.approver, fixAgent.approver)),
   ]);
   return metrics.length ? metrics : ['Waiting for human approval'];
 }

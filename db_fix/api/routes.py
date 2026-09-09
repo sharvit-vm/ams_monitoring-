@@ -119,8 +119,8 @@ def approve_remediation(approval_id: str, decision: ApprovalDecision):
             approval_id,
             approver=decision.approver,
             reason=decision.reason,
+            on_update=_record_remediation_dashboard_update,
         )
-        _record_remediation_dashboard_update(plan)
         return {"status": plan.status, "remediation_plan": plan.model_dump()}
     except KeyError:
         return JSONResponse(status_code=404, content={"status": "not_found", "approval_id": approval_id})
