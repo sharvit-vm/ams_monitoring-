@@ -860,7 +860,10 @@ Apply the fix and return your JSON summary. If the safest edit seems to be outsi
 def _execute_code_fix_plan(plan: RemediationPlan) -> dict:
     context = plan.execution_context
     event = ErrorEvent(**context["event"])
-    rca = RCAResult(**context["rca"])
+    from agents.l3_rca.schemas import L3RCAResult
+
+    report_model = L3RCAResult if "analysis_facts" in context["rca"] else RCAResult
+    rca = report_model(**context["rca"])
     with workflow_step_span(
         name="workflow.codefix.resume",
         session_id=plan.session_id or event.id,
