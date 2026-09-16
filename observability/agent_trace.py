@@ -4,11 +4,18 @@ import json
 import os
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Iterator
 
 
 _LANGFUSE_CLIENT = None
 _LANGFUSE_IMPORT_ERROR = None
+_WORKFLOW_STEPS: ContextVar[dict[str, Any] | None] = ContextVar(
+    "langfuse_workflow_steps", default=None
+)
+_TRACE_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
+    "langfuse_trace_context", default=None
+)
 _FIELD_LABELS = {
     "event_id": "event",
     "incident_id": "incident",
@@ -176,6 +183,7 @@ def trace_span(
     name: str,
     event_id: str = "",
     incident_id: str = "",
+    session_id: str = "",
     agent: str = "",
     input_data: Any = None,
     metadata: dict[str, Any] | None = None,
@@ -197,19 +205,28 @@ def trace_span(
     }
     try:
         if client and hasattr(client, "start_as_current_observation"):
-            with client.start_as_current_observation(
-                as_type="agent" if agent else "span",
-                name=name,
-                input=input_data,
+            # Langfuse propagates session_id through the active trace context.
+            # Keeping it outside the observation call works with the current SDK
+            # and ensures child observations inherit the same workflow session.
+            from langfuse import propagate_attributes
+
+            with propagate_attributes(
+                session_id=session_id or None,
                 metadata=merged_metadata,
-            ) as observation:
-                yield observation
-                duration_ms = int((time.perf_counter() - start) * 1000)
-                if hasattr(observation, "update"):
-                    observation.update(
-                        output={"status": "completed", "duration_ms": duration_ms},
-                        metadata=merged_metadata,
-                    )
+            ):
+                with client.start_as_current_observation(
+                    as_type="agent" if agent else "span",
+                    name=name,
+                    input=input_data,
+                    metadata=merged_metadata,
+                ) as observation:
+                    yield observation
+                    duration_ms = int((time.perf_counter() - start) * 1000)
+                    if hasattr(observation, "update"):
+                        observation.update(
+                            output={"status": "completed", "duration_ms": duration_ms},
+                            metadata=merged_metadata,
+                        )
         else:
             yield observation
     except Exception as exc:  # pragma: no cover - optional dependency/runtime
@@ -218,6 +235,154 @@ def trace_span(
     finally:
         if client and _enabled(os.getenv("LANGFUSE_FLUSH_ON_SPAN"), default=True):
             langfuse_flush()
+
+
+@contextmanager
+def generation_span(
+    *,
+    name: str,
+    model: str = "",
+    session_id: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> Iterator[Any]:
+    """Create a content-free Langfuse generation observation for token billing."""
+    client = _get_langfuse_client()
+    observation = None
+    merged_metadata = {"session_id": session_id, **(metadata or {})}
+    try:
+        if client and hasattr(client, "start_as_current_observation"):
+            from langfuse import propagate_attributes
+
+            with propagate_attributes(
+                session_id=session_id or None,
+                metadata=merged_metadata,
+            ):
+                with client.start_as_current_observation(
+                    as_type="generation",
+                    name=name,
+                    model=model or None,
+                    metadata=merged_metadata,
+                ) as observation:
+                    yield observation
+        else:
+            yield observation
+    except Exception as exc:  # pragma: no cover - optional dependency/runtime
+        print(f"[observability] Langfuse generation skipped; name={name} error={exc}")
+        yield None
+    finally:
+        if client and _enabled(os.getenv("LANGFUSE_FLUSH_ON_SPAN"), default=True):
+            langfuse_flush()
+
+
+@contextmanager
+def workflow_steps_context() -> Iterator[dict[str, Any]]:
+    """Collect child workflow input/output under one root workflow result."""
+    steps: dict[str, Any] = {}
+    token = _WORKFLOW_STEPS.set(steps)
+    try:
+        yield steps
+    finally:
+        _WORKFLOW_STEPS.reset(token)
+
+
+def current_workflow_steps() -> dict[str, Any] | None:
+    return _WORKFLOW_STEPS.get()
+
+
+def current_trace_context() -> dict[str, str]:
+    return dict(_TRACE_CONTEXT.get() or {})
+
+
+@contextmanager
+def workflow_step_span(
+    *,
+    name: str,
+    session_id: str = "",
+    input_data: Any = None,
+    metadata: dict[str, Any] | None = None,
+    trace_context: dict[str, str] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Record one workflow node with structured input and output.
+
+    The caller writes the final sanitized output to the yielded dictionary.
+    Raw incident payloads and source code must be summarized before reaching
+    this helper.
+    """
+    client = _get_langfuse_client()
+    result: dict[str, Any] = {}
+    started = time.perf_counter()
+    merged_metadata = {"session_id": session_id, **(metadata or {})}
+    caller_failed = False
+    try:
+        if client and hasattr(client, "start_as_current_observation"):
+            from langfuse import propagate_attributes
+
+            with propagate_attributes(
+                session_id=session_id or None,
+                metadata=merged_metadata,
+            ):
+                with client.start_as_current_observation(
+                    trace_context=trace_context,
+                    as_type="span",
+                    name=name,
+                    input=input_data,
+                    metadata=merged_metadata,
+                ) as observation:
+                    trace_token = _TRACE_CONTEXT.set({
+                        "trace_id": observation.trace_id,
+                        "parent_span_id": observation.id,
+                    })
+                    try:
+                        yield result
+                    except Exception as exc:
+                        caller_failed = True
+                        observation.update(
+                            output={"status": "failed", "error_type": type(exc).__name__},
+                            metadata={
+                                **merged_metadata,
+                                "duration_ms": int((time.perf_counter() - started) * 1000),
+                            },
+                        )
+                        raise
+                    else:
+                        observation.update(
+                            input=result.get("input", input_data),
+                            output=result.get("output", {"status": "completed"}),
+                            metadata={
+                                **merged_metadata,
+                                "duration_ms": int((time.perf_counter() - started) * 1000),
+                            },
+                        )
+                    finally:
+                        _TRACE_CONTEXT.reset(trace_token)
+        else:
+            yield result
+    except Exception as exc:  # pragma: no cover - observability is optional
+        if caller_failed:
+            raise
+        print(f"[observability] Workflow span skipped; name={name} error={exc}")
+        yield result
+    finally:
+        if client and _enabled(os.getenv("LANGFUSE_FLUSH_ON_SPAN"), default=True):
+            langfuse_flush()
+
+
+def update_generation_usage(observation: Any, usage: dict[str, Any] | None) -> None:
+    """Attach provider-reported token counts without exporting prompt content."""
+    if observation is None or not hasattr(observation, "update"):
+        return
+    usage = usage or {}
+    details = {}
+    for target, source in (
+        ("input", "input_tokens"),
+        ("output", "output_tokens"),
+        ("total", "total_tokens"),
+    ):
+        value = usage.get(source)
+        if isinstance(value, int) and value >= 0:
+            details[target] = value
+    if details:
+        observation.update(usage_details=details)
 
 
 def langfuse_flush() -> None:

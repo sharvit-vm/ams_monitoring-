@@ -113,6 +113,12 @@ def usage_config() -> dict:
     return {"callbacks": [collector]} if collector is not None else {}
 
 
+def current_usage() -> dict:
+    """Return usage collected by the current workflow scope."""
+    collector = _CURRENT.get()
+    return collector.snapshot() if collector is not None else {}
+
+
 def combine_usage(*items) -> dict:
     usages = [_usage_dict(item) for item in items if item]
     if not usages:

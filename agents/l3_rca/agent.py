@@ -26,11 +26,13 @@ from tools.neo4j_tool import (
     get_function_calls,
 )
 from observability.agent_trace import (
+    generation_span,
     log_agent_event,
     make_evidence_record,
     trace_span,
+    update_generation_usage,
 )
-from observability.token_usage import track_usage, usage_config
+from observability.token_usage import current_usage, track_usage, usage_config
 
 
 L3_RCA_TOOLS = [
@@ -371,7 +373,12 @@ def _fallback_result(event: ErrorEvent, error: Exception) -> L3RCAResult:
 
 
 @track_usage
-def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") -> L3RCAResult:
+def run_l3_rca(
+    event: ErrorEvent,
+    knowledge_id: str,
+    repo_dir: str = "clone",
+    session_id: str = "",
+) -> L3RCAResult:
     """
     Run the L3 RCA agent for a code-level incident.
 
@@ -396,6 +403,7 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
             name="l3_rca",
             event_id=event.id,
             incident_id=event.incident_id or event.external_id or "",
+            session_id=session_id or event.id,
             agent="l3_rca",
             input_data={
                 "file_path": event.file_path,
@@ -454,9 +462,18 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
                     incident_id=event.incident_id or event.external_id or "",
                     summary="Sending bounded evidence context to L3 RCA agent.",
                 )
-                result = agent.invoke({
-                    "messages": [HumanMessage(content=_build_user_message(event, knowledge_id, prefetch_context))]
-                }, config=usage_config())
+                llm_input = _build_user_message(event, knowledge_id, prefetch_context)
+                with generation_span(
+                    name="l3_rca.llm",
+                    model=getattr(agent_llm, "model_name", "") or getattr(agent_llm, "model", ""),
+                    session_id=session_id or event.id,
+                    metadata={"agent": "l3_rca", "knowledge_id": knowledge_id},
+                ) as generation:
+                    result = agent.invoke(
+                        {"messages": [HumanMessage(content=llm_input)]},
+                        config=usage_config(),
+                    )
+                    update_generation_usage(generation, current_usage())
             finally:
                 reset_tool_context(repo_token, knowledge_token)
 
@@ -504,5 +521,10 @@ def run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") ->
         return _fallback_result(event, exc)
 
 
-async def async_run_l3_rca(event: ErrorEvent, knowledge_id: str, repo_dir: str = "clone") -> L3RCAResult:
-    return await asyncio.to_thread(run_l3_rca, event, knowledge_id, repo_dir)
+async def async_run_l3_rca(
+    event: ErrorEvent,
+    knowledge_id: str,
+    repo_dir: str = "clone",
+    session_id: str = "",
+) -> L3RCAResult:
+    return await asyncio.to_thread(run_l3_rca, event, knowledge_id, repo_dir, session_id)

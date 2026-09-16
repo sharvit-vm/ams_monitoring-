@@ -25,6 +25,12 @@ class RemediationPlan(BaseModel):
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     plan: list[dict[str, Any]] = Field(default_factory=list)
     execution_context: dict[str, Any] = Field(default_factory=dict)
+    # Stable correlation ID for the complete incident workflow, including
+    # approval-resumed execution.
+    session_id: str = ""
+    # Langfuse trace context used to attach approval-resumed work to the
+    # original incident trace.
+    trace_context: dict[str, str] = Field(default_factory=dict)
     created_at: str = Field(default_factory=lambda: _now_iso())
     updated_at: str = Field(default_factory=lambda: _now_iso())
     approved_by: str | None = None

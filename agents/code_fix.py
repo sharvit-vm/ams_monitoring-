@@ -33,8 +33,16 @@ from agents.rca import RCAResult
 from agents.skill_loader import build_skill_prompt
 from tools.file_tool import read_file, read_file_range, write_fix, get_token_count, reset_tool_context, set_tool_context
 from tools.neo4j_tool import get_connected_files, get_function_calls, get_file_summary
-from observability.agent_trace import log_agent_event, make_evidence_record, trace_span
-from observability.token_usage import track_usage, usage_config
+from observability.agent_trace import (
+    generation_span,
+    log_agent_event,
+    make_evidence_record,
+    trace_span,
+    update_generation_usage,
+    current_trace_context,
+    workflow_step_span,
+)
+from observability.token_usage import current_usage, track_usage, usage_config
 from governance.approvals import RemediationPlan, approval_store
 from governance.telemetry import emit_governance_event
 
@@ -355,6 +363,7 @@ def run_code_fix(
     knowledge_id: str,
     repo_dir: str = CLONE_DIR,
     require_approval: bool = True,
+    session_id: str = "",
 ) -> CodeFixResult:
     started_at = time.perf_counter()
     incident_id = event.incident_id or event.external_id or ""
@@ -464,6 +473,8 @@ def run_code_fix(
                 "knowledge_id": knowledge_id,
                 "repo_dir": repo_dir,
             },
+            session_id=session_id or event.id,
+            trace_context=current_trace_context(),
         ))
         emit_governance_event(
             "remediation.waiting_for_approval",
@@ -589,6 +600,7 @@ Apply the fix and return your JSON summary. If the safest edit seems to be outsi
                 name="codefix.llm_patch_generation",
                 event_id=event.id,
                 incident_id=incident_id,
+                session_id=session_id or event.id,
                 agent="codefix",
                 input_data={
                     "buggy_file": rca.buggy_file,
@@ -598,9 +610,17 @@ Apply the fix and return your JSON summary. If the safest edit seems to be outsi
                 },
                 metadata={"repo": event.repo_full_name, "knowledge_id": knowledge_id},
             ):
-                result = agent.invoke({
-                    "messages": [HumanMessage(content=user_message)]
-                }, config=usage_config())
+                with generation_span(
+                    name="codefix.llm",
+                    model=getattr(agent_llm, "model_name", "") or getattr(agent_llm, "model", ""),
+                    session_id=session_id or event.id,
+                    metadata={"agent": "codefix", "knowledge_id": knowledge_id},
+                ) as generation:
+                    result = agent.invoke(
+                        {"messages": [HumanMessage(content=user_message)]},
+                        config=usage_config(),
+                    )
+                    update_generation_usage(generation, current_usage())
         finally:
             reset_tool_context(repo_token, knowledge_token)
 
@@ -841,13 +861,31 @@ def _execute_code_fix_plan(plan: RemediationPlan) -> dict:
     context = plan.execution_context
     event = ErrorEvent(**context["event"])
     rca = RCAResult(**context["rca"])
-    result = run_code_fix(
-        event,
-        rca,
-        context["knowledge_id"],
-        repo_dir=context.get("repo_dir", CLONE_DIR),
-        require_approval=False,
-    )
+    with workflow_step_span(
+        name="workflow.codefix.resume",
+        session_id=plan.session_id or event.id,
+        trace_context=plan.trace_context or None,
+        input_data={
+            "approval_received": True,
+            "rca_available": True,
+            "repository_context_available": bool(context.get("repo_dir")),
+        },
+        metadata={"workflow_node": "codefix.resume", "approval_resumed": True},
+    ) as observation:
+        result = run_code_fix(
+            event,
+            rca,
+            context["knowledge_id"],
+            repo_dir=context.get("repo_dir", CLONE_DIR),
+            require_approval=False,
+            session_id=plan.session_id or event.id,
+        )
+        observation["output"] = {
+            "status": result.status,
+            "success": result.success,
+            "changed_file_count": len(result.files_changed or []),
+            "verification_record_count": len(result.verification_records or []),
+        }
     return result.model_dump()
 
 

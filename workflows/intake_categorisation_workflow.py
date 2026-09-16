@@ -5,6 +5,7 @@ import hmac
 import os
 import re
 import subprocess
+from uuid import uuid4
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 from urllib.parse import urlparse, urlunparse
@@ -15,6 +16,13 @@ from agents.code_fix import run_code_fix
 from agents.l3_rca import run_l3_rca
 from categorisation_adapter import categorise_error_event
 from dashboard_state import record_execution
+from observability.agent_trace import (
+    current_workflow_steps,
+    generation_span,
+    update_generation_usage,
+    workflow_step_span,
+    workflow_steps_context,
+)
 from observability.token_usage import usage_scope, workflow_usage
 from issuelayer.connectors.base import log_graph_stage, log_intake_snapshot, normalised_event_log_payload
 from issuelayer.intake.normalizers.router import normalise_source_event
@@ -35,6 +43,125 @@ AUTO_INGEST_ON_WEBHOOK = os.getenv("AUTO_INGEST_ON_WEBHOOK", "true").lower() == 
 AUTO_VECTOR_INGEST_ON_WEBHOOK = os.getenv("AUTO_VECTOR_INGEST_ON_WEBHOOK", "false").lower() == "true"
 
 
+def _workflow_observation_snapshot(
+    state: IntakeCategorisationState,
+    node_name: str = "",
+) -> dict[str, Any]:
+    """Return stage-specific telemetry without incident or repository content."""
+    event = state.get("error_event")
+    categorisation = state.get("categorisation") or {}
+    guardrails = state.get("guardrails") or {}
+    l3 = state.get("l3_rca_result")
+    codefix = state.get("codefix_result")
+    snapshot: dict[str, Any] = {
+        "status": state.get("status"),
+        "source": state.get("source"),
+    }
+
+    if node_name in {"", "root", "connector"}:
+        if state.get("payload"):
+            snapshot["payload_field_count"] = len(state["payload"])
+        if state.get("headers"):
+            snapshot["header_count"] = len(state["headers"])
+    if event is not None:
+        snapshot["normalized_event_present"] = True
+        snapshot["traceback_present"] = bool(getattr(event, "traceback", ""))
+        snapshot["repository_context_present"] = bool(getattr(event, "repo_full_name", ""))
+    if node_name in {"prepare_l3_context", "l3_rca", "codefix"}:
+        snapshot["analysis_input"] = {
+            "traceback_present": bool(getattr(event, "traceback", "")) if event else False,
+            "file_hint_present": bool(getattr(event, "file_path", "")) if event else False,
+            "line_hint_present": bool(getattr(event, "line_number", None)) if event else False,
+            "function_hint_present": bool(getattr(event, "function_name", "")) if event else False,
+            "knowledge_context_available": bool(state.get("knowledge_id")),
+            "context_token_total": (state.get("l3_context_token_usage") or {}).get("total_tokens"),
+        }
+    if categorisation and node_name in {
+        "guardrails", "categorisation", "l2_rca", "fix_agent", "l3_rca", "codefix", "build_response"
+    }:
+        snapshot.update({
+            "support_level": _support_level(categorisation),
+            "category": categorisation.get("category"),
+            "confidence": categorisation.get("confidence"),
+        })
+    if guardrails and node_name in {"guardrails", "categorisation", "build_response"}:
+        snapshot["guardrails_allowed"] = guardrails.get("allowed")
+    if l3 is not None and node_name in {"l3_rca", "save_l3_report", "codefix", "build_response"}:
+        evidence_records = getattr(l3, "evidence_records", None) or []
+        token_usage = getattr(l3, "token_usage", None) or {}
+        snapshot["l3_rca"] = {
+            "confidence": getattr(l3, "confidence", ""),
+            "confidence_score": getattr(l3, "confidence_score", None),
+            "status": getattr(l3, "status", ""),
+            "root_cause_present": bool(getattr(l3, "root_cause", "")),
+            "reasoning_present": bool(getattr(l3, "reasoning", "")),
+            "fix_suggestion_present": bool(getattr(l3, "fix_suggestion", "")),
+            "buggy_line_count": len(getattr(l3, "buggy_lines", None) or []),
+            "affected_file_count": len(getattr(l3, "affected_files", None) or []),
+            "evidence_record_count": len(evidence_records),
+            "evidence_types": sorted({
+                str(record.get("type"))
+                for record in evidence_records
+                if isinstance(record, dict) and record.get("type")
+            }),
+            "token_usage": {
+                key: token_usage.get(key)
+                for key in ("input_tokens", "output_tokens", "total_tokens", "calls")
+                if token_usage.get(key) is not None
+            },
+        }
+    if codefix is not None and node_name in {"codefix", "build_response"}:
+        verification_records = getattr(codefix, "verification_records", None) or []
+        token_usage = getattr(codefix, "token_usage", None) or {}
+        snapshot["codefix"] = {
+            "status": getattr(codefix, "status", ""),
+            "success": getattr(codefix, "success", None),
+            "confidence": getattr(codefix, "confidence", ""),
+            "patch_summary_present": bool(getattr(codefix, "patch_summary", "")),
+            "verification_summary_present": bool(getattr(codefix, "verification_summary", "")),
+            "changed_file_count": len(getattr(codefix, "files_changed", None) or []),
+            "verification_record_count": len(verification_records),
+            "verification_statuses": sorted({
+                str(record.get("status"))
+                for record in verification_records
+                if isinstance(record, dict) and record.get("status")
+            }),
+            "token_usage": {
+                key: token_usage.get(key)
+                for key in ("input_tokens", "output_tokens", "total_tokens", "calls")
+                if token_usage.get(key) is not None
+            },
+        }
+    return {
+        key: value
+        for key, value in snapshot.items()
+        if value not in (None, "", [], {}, ())
+    }
+
+
+def _observed_workflow_node(name: str, node: Callable) -> Callable:
+    def wrapped(state: IntakeCategorisationState) -> IntakeCategorisationState:
+        session_id = state.get("workflow_session_id", "")
+        with workflow_step_span(
+            name=f"workflow.{name}",
+            session_id=session_id,
+            input_data=_workflow_observation_snapshot(state, name),
+            metadata={"workflow_node": name},
+        ) as observation:
+            result = node(state)
+            observation["output"] = _workflow_observation_snapshot(result, name)
+            steps = current_workflow_steps()
+            if steps is not None:
+                steps[name] = {
+                    "input": _workflow_observation_snapshot(state, name),
+                    "output": _workflow_observation_snapshot(result, name),
+                }
+            return result
+
+    wrapped.__name__ = getattr(node, "__name__", name)
+    return wrapped
+
+
 class GatewayError(Exception):
     def __init__(self, status_code: int, detail: str):
         super().__init__(detail)
@@ -43,6 +170,7 @@ class GatewayError(Exception):
 
 
 class IntakeCategorisationState(TypedDict, total=False):
+    workflow_session_id: str
     source: str
     payload: dict[str, Any]
     payload_bytes: bytes
@@ -475,7 +603,14 @@ def build_intake_categorisation_workflow():
     def categorisation_node(state: IntakeCategorisationState) -> IntakeCategorisationState:
         event = state["error_event"]
         log_graph_stage(7, "categorisation_started", "running", event=event.id, incident=event.incident_id or event.external_id)
-        result_payload = categorise_error_event(event)
+        with generation_span(
+            name="categorisation.llm",
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            session_id=state.get("workflow_session_id") or event.id,
+            metadata={"agent": "categorisation"},
+        ) as generation:
+            result_payload = categorise_error_event(event)
+            update_generation_usage(generation, result_payload.get("token_usage"))
         log_graph_stage(
             8,
             "categorisation_completed",
@@ -539,8 +674,15 @@ def build_intake_categorisation_workflow():
         try:
             agent = L2RCAAgent()
             request = L2IncidentRequest(**l2_request_dict)
-            result = agent.analyze(request)
+            with generation_span(
+                name="l2_rca.llm",
+                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                session_id=state.get("workflow_session_id") or event.id,
+                metadata={"agent": "l2_rca"},
+            ) as generation:
+                result = agent.analyze(request)
             result_dict = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+            update_generation_usage(generation, result_dict.get("token_usage_details"))
             result_dict["status"] = "completed"
             print(f"[graph] L2 RCA node completed; ticket={l2_request_dict['ticket_id']}, decision={result_dict.get('decision')}")
         except Exception as exc:
@@ -614,7 +756,12 @@ def build_intake_categorisation_workflow():
         event = state["error_event"]
         print(f"[graph] L3 RCA started; event={event.id}, error_type={event.error_type}")
         try:
-            rca_result = run_l3_rca(event, state["knowledge_id"], repo_dir=state["repo_dir"])
+            rca_result = run_l3_rca(
+                event,
+                state["knowledge_id"],
+                repo_dir=state["repo_dir"],
+                session_id=state.get("workflow_session_id", ""),
+            )
             print(
                 "[graph] L3 RCA completed; "
                 f"confidence={rca_result.confidence}, file={rca_result.buggy_file}"
@@ -649,6 +796,7 @@ def build_intake_categorisation_workflow():
                 state["l3_rca_result"],
                 state["knowledge_id"],
                 repo_dir=state["repo_dir"],
+                session_id=state.get("workflow_session_id", ""),
             )
             print(f"[graph] Code fix completed; success={fix_result.success}")
             if fix_result.error:
@@ -672,6 +820,7 @@ def build_intake_categorisation_workflow():
         codefix = state.get("codefix_result")
         response = {
             "status": state.get("status", "completed"),
+            "workflow_session_id": state.get("workflow_session_id"),
             "source_event_id": source_event.id if source_event else None,
             "event_id": event.id if event else None,
             "normalised_event": normalised_event_log_payload(event) if event else None,
@@ -729,18 +878,18 @@ def build_intake_categorisation_workflow():
     def route_after_l3_report(state: IntakeCategorisationState) -> str:
         return "codefix" if state.get("status") == "l3_rca_report_saved" else "build_response"
 
-    graph.add_node("connector", connector_node)
-    graph.add_node("normalizer", normalizer_node)
-    graph.add_node("guardrails", guardrails_node)
-    graph.add_node("categorisation", categorisation_node)
-    graph.add_node("l1_placeholder", l1_placeholder_node)
-    graph.add_node("l2_rca", l2_rca_node)
-    graph.add_node("fix_agent", fix_agent_node)
-    graph.add_node("prepare_l3_context", prepare_l3_context_node)
-    graph.add_node("l3_rca", l3_rca_node)
-    graph.add_node("save_l3_report", save_l3_report_node)
-    graph.add_node("codefix", codefix_node)
-    graph.add_node("build_response", build_response_node)
+    graph.add_node("connector", _observed_workflow_node("connector", connector_node))
+    graph.add_node("normalizer", _observed_workflow_node("normalizer", normalizer_node))
+    graph.add_node("guardrails", _observed_workflow_node("guardrails", guardrails_node))
+    graph.add_node("categorisation", _observed_workflow_node("categorisation", categorisation_node))
+    graph.add_node("l1_placeholder", _observed_workflow_node("l1_placeholder", l1_placeholder_node))
+    graph.add_node("l2_rca", _observed_workflow_node("l2_rca", l2_rca_node))
+    graph.add_node("fix_agent", _observed_workflow_node("fix_agent", fix_agent_node))
+    graph.add_node("prepare_l3_context", _observed_workflow_node("prepare_l3_context", prepare_l3_context_node))
+    graph.add_node("l3_rca", _observed_workflow_node("l3_rca", l3_rca_node))
+    graph.add_node("save_l3_report", _observed_workflow_node("save_l3_report", save_l3_report_node))
+    graph.add_node("codefix", _observed_workflow_node("codefix", codefix_node))
+    graph.add_node("build_response", _observed_workflow_node("build_response", build_response_node))
 
     graph.set_entry_point("connector")
     graph.add_edge("connector", "normalizer")
@@ -805,9 +954,38 @@ def run_intake_categorisation_workflow(
     global _WORKFLOW
     if _WORKFLOW is None:
         _WORKFLOW = build_intake_categorisation_workflow()
-    return _WORKFLOW.invoke({
-        "source": source.lower().strip(),
-        "payload": payload,
-        "payload_bytes": payload_bytes,
-        "headers": headers,
-    })
+    workflow_session_id = str(uuid4())
+    with workflow_steps_context() as steps:
+        with workflow_step_span(
+            name="ams.workflow",
+            session_id=workflow_session_id,
+            input_data={
+                "source": source.lower().strip(),
+                "payload_fields": sorted(payload.keys()),
+                "header_names": sorted(headers.keys()),
+            },
+            metadata={"workflow": "intake_categorisation", "workflow_root": True},
+        ) as observation:
+            result = _WORKFLOW.invoke({
+                "workflow_session_id": workflow_session_id,
+                "source": source.lower().strip(),
+                "payload": payload,
+                "payload_bytes": payload_bytes,
+                "headers": headers,
+            })
+            observation["input"] = {
+                "workflow": {
+                    "source": source.lower().strip(),
+                    "payload_field_count": len(payload),
+                    "header_count": len(headers),
+                },
+                "steps": {
+                    step_name: step_data.get("input", {})
+                    for step_name, step_data in steps.items()
+                },
+            }
+            observation["output"] = {
+                "workflow": _workflow_observation_snapshot(result, "root"),
+                "steps": steps,
+            }
+            return result
