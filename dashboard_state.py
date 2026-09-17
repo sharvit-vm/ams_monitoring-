@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from queue import Queue
+import asyncio
 from threading import Lock
 from typing import Any
 from uuid import uuid4
+from contextvars import ContextVar
+from storage.job_store import job_store
 
 
 _LOCK = Lock()
 _LATEST_EXECUTION: dict[str, Any] | None = None
-_SUBSCRIBERS: set[Queue] = set()
+_SUBSCRIBERS: dict[asyncio.Queue, asyncio.AbstractEventLoop] = {}
+execution_id = ContextVar("execution_id", default=None)
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -30,33 +33,46 @@ def _json_safe_value(value: Any) -> Any:
 
 
 def record_execution(response: dict[str, Any]) -> dict[str, Any]:
+    identity = execution_id.get() or response.get("workflow_session_id") or str(uuid4())
     execution = {
-        "id": str(uuid4()),
+        "id": identity,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "response": _json_safe_value(response),
     }
-    subscribers: list[Queue]
+    job_store.save_snapshot(identity, execution)
     with _LOCK:
         global _LATEST_EXECUTION
         _LATEST_EXECUTION = execution
-        subscribers = list(_SUBSCRIBERS)
-    for subscriber in subscribers:
-        subscriber.put(execution)
+        subscribers = list(_SUBSCRIBERS.items())
+    for subscriber, loop in subscribers:
+        try:
+            loop.call_soon_threadsafe(_publish, subscriber, execution)
+        except RuntimeError:
+            unsubscribe_executions(subscriber)
     return execution
 
 
 def latest_execution() -> dict[str, Any] | None:
-    with _LOCK:
-        return _LATEST_EXECUTION.copy() if _LATEST_EXECUTION else None
+    return job_store.snapshot()
 
 
-def subscribe_executions() -> Queue:
-    queue: Queue = Queue()
+def execution_for_session(session_id: str) -> dict[str, Any] | None:
+    return job_store.snapshot(session_id) if session_id else None
+
+
+def _publish(queue: asyncio.Queue, execution: dict[str, Any]) -> None:
+    if queue.full():
+        queue.get_nowait()
+    queue.put_nowait(execution)
+
+
+def subscribe_executions() -> asyncio.Queue:
+    queue = asyncio.Queue(maxsize=100)
     with _LOCK:
-        _SUBSCRIBERS.add(queue)
+        _SUBSCRIBERS[queue] = asyncio.get_running_loop()
     return queue
 
 
-def unsubscribe_executions(queue: Queue) -> None:
+def unsubscribe_executions(queue: asyncio.Queue) -> None:
     with _LOCK:
-        _SUBSCRIBERS.discard(queue)
+        _SUBSCRIBERS.pop(queue, None)

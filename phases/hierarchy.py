@@ -4,7 +4,9 @@ Groups files into L1-L8 folder nodes bottom-up.
 Calls LLM once per folder to generate a summary.
 """
 import json
-import time
+import hashlib
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List
 from collections import defaultdict
@@ -12,8 +14,10 @@ from tqdm import tqdm
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from models import FileInfo, LevelNode, PipelineState, RepoSummary
+from phases.file_analysis import get_repo_cache_key
 from config import CACHE_DIR, MAX_HIERARCHY_LEVELS, llm
 from observability.token_usage import usage_config
+MAX_WORKERS = max(1, int(os.getenv("HIERARCHY_MAX_WORKERS", "4")))
 prompt = PromptTemplate.from_template("""
 You are analyzing a folder in a software repository.
 Folder: {folder_path}
@@ -29,22 +33,28 @@ Reply ONLY in this JSON format:
 """)
 chain = prompt | llm | JsonOutputParser()
 def get_hierarchy_cache_dir(state: PipelineState) -> Path:
-    d = Path(CACHE_DIR) / state.knowledge_id / "hierarchy"
+    d = Path(CACHE_DIR) / get_repo_cache_key(state.repo_path) / "hierarchy"
     d.mkdir(parents=True, exist_ok=True)
     return d
-def save_hierarchy_cache(cache_dir: Path, folder_path: str, data: dict, level: int):
+def _fingerprint(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+def save_hierarchy_cache(cache_dir: Path, folder_path: str, data: dict, level: int, fingerprint: str):
     level_dir = cache_dir / f"L{level}"
     level_dir.mkdir(parents=True, exist_ok=True)
     filename = folder_path.replace("/", "__").replace("\\", "__") + ".json"
     with open(level_dir / filename, "w") as f:
-        json.dump(data, f, indent=2)
-def load_hierarchy_cache(cache_dir: Path, folder_path: str, level: int) -> dict | None:
+        json.dump({"fingerprint": fingerprint, "node": data}, f, indent=2)
+def load_hierarchy_cache(cache_dir: Path, folder_path: str, level: int, fingerprint: str) -> dict | None:
     level_dir = cache_dir / f"L{level}"
     filename = folder_path.replace("/", "__").replace("\\", "__") + ".json"
     p = level_dir / filename
     if p.exists():
         with open(p) as f:
-            return json.load(f)
+            raw = json.load(f)
+            if "node" not in raw or raw.get("fingerprint") != fingerprint:
+                return None
+            return raw["node"]
     return None
 def get_parent(path: str) -> str | None:
     parent = str(Path(path).parent)
@@ -78,30 +88,35 @@ def build_hierarchy(state: PipelineState) -> PipelineState:
         if parent == ".":
             parent = "(root)"
         folder_files[parent].append(f)
-    for folder_path, files in tqdm(folder_files.items(), desc="L1 nodes"):
-        cached = load_hierarchy_cache(cache_dir, folder_path, level=1)
+    pending_l1 = []
+    for folder_path, files in folder_files.items():
+        languages = sorted(set(f.language for f in files))
+        child_summaries = [f"{Path(f.path).name}: {f.purpose}" for f in files if f.purpose]
+        fingerprint = _fingerprint({"level": 1, "folder": folder_path, "files": [(f.path, f.total_lines, f.summary, f.purpose) for f in files]})
+        cached = load_hierarchy_cache(cache_dir, folder_path, level=1, fingerprint=fingerprint)
         if cached:
             hierarchy[folder_path] = LevelNode(**cached)
             continue
-        languages = list(set(f.language for f in files))
-        child_summaries = [
-            f"{Path(f.path).name}: {f.purpose}"
-            for f in files if f.purpose
-        ]
-        summary, purpose = summarize_folder(folder_path, child_summaries, languages, len(files))
-        time.sleep(0.1)
-        node = LevelNode(
-            path=folder_path,
-            level=1,
-            files=[f.path for f in files],
-            languages=languages,
-            file_count=len(files),
-            summary=summary,
-            purpose=purpose,
-            parent_path=get_parent(folder_path),
-        )
-        save_hierarchy_cache(cache_dir, folder_path, node.model_dump(), level=1)
-        hierarchy[folder_path] = node
+        pending_l1.append((folder_path, files, languages, child_summaries, fingerprint))
+    print(f"[Hierarchy] L1 summaries: {len(pending_l1)} pending, workers={MAX_WORKERS}")
+    with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(pending_l1) or 1)) as executor:
+        futures = {executor.submit(summarize_folder, path, summaries, languages, len(files)): item for item, (path, files, languages, summaries, _) in enumerate(pending_l1)}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="L1 summaries"):
+            index = futures[future]
+            folder_path, files, languages, _, fingerprint = pending_l1[index]
+            summary, purpose = future.result()
+            node = LevelNode(
+                path=folder_path,
+                level=1,
+                files=[f.path for f in files],
+                languages=languages,
+                file_count=len(files),
+                summary=summary,
+                purpose=purpose,
+                parent_path=get_parent(folder_path),
+            )
+            save_hierarchy_cache(cache_dir, folder_path, node.model_dump(), level=1, fingerprint=fingerprint)
+            hierarchy[folder_path] = node
     # Exclude "(root)" so it doesn't block L2+ parent traversal
     current_paths = {path for path in folder_files if path != "(root)"}
     for level in range(2, MAX_HIERARCHY_LEVELS + 1):
@@ -113,10 +128,13 @@ def build_hierarchy(state: PipelineState) -> PipelineState:
         if not new_paths:
             break
         print(f"[Hierarchy] Building L{level} nodes ({len(new_paths)} folders)...")
-        for parent_path, children in tqdm(parent_children.items(), desc=f"L{level} nodes"):
+        pending_level = []
+        for parent_path, children in parent_children.items():
             if parent_path in hierarchy:
                 continue
-            cached = load_hierarchy_cache(cache_dir, parent_path, level=level)
+            child_inputs = [(c, hierarchy[c].file_count, hierarchy[c].summary, hierarchy[c].purpose) for c in children if c in hierarchy]
+            fingerprint = _fingerprint({"level": level, "folder": parent_path, "children": child_inputs})
+            cached = load_hierarchy_cache(cache_dir, parent_path, level=level, fingerprint=fingerprint)
             if cached:
                 hierarchy[parent_path] = LevelNode(**cached)
                 continue
@@ -130,11 +148,17 @@ def build_hierarchy(state: PipelineState) -> PipelineState:
                 f"{Path(c).name}/: {hierarchy[c].purpose}"
                 for c in children if c in hierarchy and hierarchy[c].purpose
             ]
-            summary, purpose = summarize_folder(parent_path, child_summaries, all_langs, total_files)
-            time.sleep(0.1)
-            node = LevelNode(path=parent_path,level=level,subfolders=children,languages=all_langs,file_count=total_files,summary=summary,purpose=purpose,parent_path=get_parent(parent_path),)
-            save_hierarchy_cache(cache_dir, parent_path, node.model_dump(), level=level)
-            hierarchy[parent_path] = node
+            pending_level.append((parent_path, children, all_langs, total_files, child_summaries, fingerprint))
+        print(f"[Hierarchy] L{level} summaries: {len(pending_level)} pending, workers={MAX_WORKERS}")
+        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(pending_level) or 1)) as executor:
+            futures = {executor.submit(summarize_folder, path, summaries, languages, total_files): item for item, (path, children, languages, total_files, summaries, _) in enumerate(pending_level)}
+            for future in tqdm(as_completed(futures), total=len(futures), desc=f"L{level} summaries"):
+                index = futures[future]
+                parent_path, children, all_langs, total_files, _, fingerprint = pending_level[index]
+                summary, purpose = future.result()
+                node = LevelNode(path=parent_path,level=level,subfolders=children,languages=all_langs,file_count=total_files,summary=summary,purpose=purpose,parent_path=get_parent(parent_path),)
+                save_hierarchy_cache(cache_dir, parent_path, node.model_dump(), level=level, fingerprint=fingerprint)
+                hierarchy[parent_path] = node
         current_paths = set(parent_children.keys())
     print("\n[Hierarchy] Generating repo summary...")
     max_actual_level = max((n.level for n in hierarchy.values()), default=1)

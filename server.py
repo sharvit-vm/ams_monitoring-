@@ -1,8 +1,9 @@
 """FastAPI entry point for the AMS monitoring intake + categorisation service."""
 
 import json
+import asyncio
 import os
-from queue import Empty
+import hashlib
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -32,9 +33,13 @@ from workflows.intake_categorisation_workflow import (  # noqa: E402
 )
 from db_fix.api.routes import router as db_fix_router  # noqa: E402
 from governance.approvals import approval_store  # noqa: E402
+from storage.job_store import job_store  # noqa: E402
+from workflows.job_worker import workflow_lifespan  # noqa: E402
+from workflows.intake_categorisation_workflow import CONNECTOR_REGISTRY  # noqa: E402
+from issuelayer.connectors.base import _redact  # noqa: E402
 
 
-app = FastAPI(title="AMS Monitoring Incident Gateway")
+app = FastAPI(title="AMS Monitoring Incident Gateway", lifespan=workflow_lifespan)
 
 _allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
@@ -291,29 +296,48 @@ async def _run_gateway(source: str, request: Request, *, include_raw_body: bool 
         )
 
     payload_bytes = await request.body() if include_raw_body else b""
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object")
     if include_raw_body and not payload_bytes:
         payload_bytes = str(payload).encode("utf-8")
 
     try:
-        print(f"[gateway] Received {source_key} webhook; running workflow in threadpool")
-        final_state = await run_in_threadpool(
-            run_intake_categorisation_workflow,
-            source=source_key,
-            payload=payload,
-            headers=dict(request.headers),
-            payload_bytes=payload_bytes,
-        )
+        # Verify the original signature/token before acknowledging or persisting.
+        source_event = CONNECTOR_REGISTRY[source_key]({
+            "source": source_key, "payload": payload,
+            "headers": dict(request.headers), "payload_bytes": payload_bytes,
+        })
     except GatewayError as exc:
         if exc.status_code == 200:
             return JSONResponse({"status": "ignored", "reason": exc.detail}, status_code=200)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    response_body = final_state.get("response", {"status": final_state.get("status", "completed")})
-    safe_response_body = _json_safe_value(response_body)
-    record_execution(safe_response_body)
-    print(f"[gateway] Completed {source_key} webhook; status={safe_response_body.get('status')}")
-    return JSONResponse(safe_response_body, status_code=200)
+    # Authentication headers and raw signed bytes are never queued.
+    source_event.headers = {}
+    source_event.raw_body = ""
+    source_event.raw_payload = _redact(source_event.raw_payload)
+    delivery = request.headers.get("X-GitHub-Delivery") or request.headers.get("X-Idempotency-Key")
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    dedupe = hashlib.sha256(f"{source_key}:{delivery or canonical}".encode()).hexdigest()
+    identity, created = await run_in_threadpool(
+        job_store.enqueue, "incident",
+        {"source": source_key, "source_event": source_event.model_dump(mode="json")}, dedupe,
+    )
+    return JSONResponse({"status": "accepted", "job_id": identity,
+                         "workflow_session_id": identity, "duplicate": not created,
+                         "status_url": f"/dashboard/jobs/{identity}"}, status_code=202)
+
+
+@app.get("/dashboard/jobs/{job_id}")
+async def dashboard_job(job_id: str):
+    job = await run_in_threadpool(job_store.get, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job": job, "execution": await run_in_threadpool(job_store.snapshot, job_id)}
 
 
 @app.post("/webhook/incidents/{source}")
@@ -366,7 +390,7 @@ async def dashboard_workflow():
 
 @app.get("/dashboard/executions/latest")
 async def dashboard_latest_execution():
-    execution = latest_execution()
+    execution = await run_in_threadpool(latest_execution)
     if execution is None:
         return {"status": "empty", "message": "No executions recorded yet.", "summary": None}
     return {
@@ -383,14 +407,14 @@ async def dashboard_execution_stream(request: Request):
 
     async def events():
         try:
-            latest = latest_execution()
+            latest = await run_in_threadpool(latest_execution)
             if latest is not None:
                 yield f"event: execution\ndata: {json.dumps(latest, default=str)}\n\n"
             while not await request.is_disconnected():
                 try:
-                    execution = await run_in_threadpool(queue.get, True, 15)
+                    execution = await asyncio.wait_for(queue.get(), timeout=15)
                     yield f"event: execution\ndata: {json.dumps(execution, default=str)}\n\n"
-                except Empty:
+                except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
         finally:
             unsubscribe_executions(queue)

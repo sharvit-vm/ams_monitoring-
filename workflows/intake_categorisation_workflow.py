@@ -149,6 +149,20 @@ def _observed_workflow_node(name: str, node: Callable) -> Callable:
             metadata={"workflow_node": name},
         ) as observation:
             result = node(state)
+            if state.get("workflow_session_id"):
+                event = result.get("error_event")
+                response = result.get("response") or {
+                    "status": result.get("status"),
+                    "source": result.get("source"),
+                    "normalised_event": normalised_event_log_payload(event) if event else None,
+                    "categorisation": result.get("categorisation"),
+                    "guardrails": result.get("guardrails"),
+                    "l2_rca": result.get("l2_rca_result"),
+                    "l3_rca": result["l3_rca_result"].model_dump() if hasattr(result.get("l3_rca_result"), "model_dump") else result.get("l3_rca_result"),
+                    "fix_agent": result.get("fix_agent_result"),
+                    "codefix": result["codefix_result"].model_dump() if hasattr(result.get("codefix_result"), "model_dump") else result.get("codefix_result"),
+                }
+                record_execution({**response, "workflow_session_id": session_id, "workflow_stage": name})
             observation["output"] = _workflow_observation_snapshot(result, name)
             steps = current_workflow_steps()
             if steps is not None:
@@ -556,7 +570,7 @@ def build_intake_categorisation_workflow():
         source = state["source"].lower().strip()
         parser = CONNECTOR_REGISTRY[source]
         log_graph_stage(1, "connector_started", "running", source=source)
-        source_event = parser(state)
+        source_event = state.get("source_event") or parser(state)
         log_intake_snapshot("raw_source_event", source_event.source, source_event, stage_order=2)
         _record_connector_dashboard_update(source, source_event)
         log_graph_stage(
@@ -950,11 +964,13 @@ def run_intake_categorisation_workflow(
     payload: dict[str, Any],
     headers: dict[str, str],
     payload_bytes: bytes = b"",
+    source_event: SourceEvent | None = None,
+    workflow_session_id: str | None = None,
 ) -> IntakeCategorisationState:
     global _WORKFLOW
     if _WORKFLOW is None:
         _WORKFLOW = build_intake_categorisation_workflow()
-    workflow_session_id = str(uuid4())
+    workflow_session_id = workflow_session_id or str(uuid4())
     with workflow_steps_context() as steps:
         with workflow_step_span(
             name="ams.workflow",
@@ -972,6 +988,7 @@ def run_intake_categorisation_workflow(
                 "payload": payload,
                 "payload_bytes": payload_bytes,
                 "headers": headers,
+                "source_event": source_event,
             })
             observation["input"] = {
                 "workflow": {

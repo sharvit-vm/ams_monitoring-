@@ -6,6 +6,7 @@ Runs tree-sitter parser on each file.
 Extracts functions, classes, imports and caches to disk.
 """
 import json
+import hashlib
 from pathlib import Path
 from typing import Optional
 from tqdm import tqdm
@@ -47,25 +48,40 @@ def get_parser(language: str):
 
     return parser
 
+def get_repo_cache_key(repo_path: str) -> str:
+    return hashlib.sha256(str(Path(repo_path).resolve()).encode("utf-8")).hexdigest()[:16]
+
 def get_file_cache_dir(state: PipelineState) -> Path:
-    d = Path(CACHE_DIR) / state.knowledge_id / "file_analysis"
+    # Cache analysis by repository identity; knowledge IDs identify graph runs.
+    d = Path(CACHE_DIR) / get_repo_cache_key(state.repo_path) / "file_analysis"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 def get_cache_key(file_path: str) -> str:
     return file_path.replace("/", "__").replace("\\", "__") + ".json"
 
-def load_file_cache(cache_dir: Path, file_path: str) -> Optional[FileInfo]:
+def _source_hash(file_path: str) -> str:
+    try:
+        return hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+def load_file_cache(cache_dir: Path, file_path: str, absolute_path: str | None = None) -> Optional[FileInfo]:
     cache_file = cache_dir / get_cache_key(file_path)
     if cache_file.exists():
         with open(cache_file) as f:
-            return FileInfo(**json.load(f))
+            raw = json.load(f)
+            if "file" in raw:
+                if raw.get("source_hash") != _source_hash(absolute_path or raw["file"].get("absolute_path", "")):
+                    return None
+                raw = raw["file"]
+            return FileInfo(**raw)
     return None
 
 def save_file_cache(cache_dir: Path, file_info: FileInfo):
     cache_file = cache_dir / get_cache_key(file_info.path)
     with open(cache_file, "w") as f:
-        json.dump(file_info.model_dump(), f, indent=2)
+        json.dump({"source_hash": _source_hash(file_info.absolute_path), "file": file_info.model_dump()}, f, indent=2)
 
 def analyze_files(state: PipelineState) -> PipelineState:
     if state.file_analysis_complete:
@@ -83,7 +99,7 @@ def analyze_files(state: PipelineState) -> PipelineState:
 
     for file_info in tqdm(state.files, desc="Parsing files"):
 
-        cached = load_file_cache(cache_dir, file_info.path)
+        cached = load_file_cache(cache_dir, file_info.path, file_info.absolute_path)
         if cached:
             updated_files.append(cached)
             cache_hit += 1

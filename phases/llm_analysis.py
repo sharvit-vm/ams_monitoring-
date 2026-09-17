@@ -1,7 +1,6 @@
 """phase no. 3 llm analysis reads fileInfo and creates summary and purpose for each file"""
 import json
 import os
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
@@ -40,7 +39,6 @@ chain = prompt | llm | parser
 
 MAX_WORKERS = max(1, int(os.getenv("LLM_ANALYSIS_MAX_WORKERS", "4")))
 BATCH_SIZE = max(1, int(os.getenv("LLM_ANALYSIS_BATCH_SIZE", str(MAX_WORKERS))))
-BATCH_PAUSE_SECONDS = float(os.getenv("LLM_ANALYSIS_BATCH_PAUSE_SECONDS", "0.1"))
 
 def should_skip(f: FileInfo) -> bool:
     if f.llm_processed:
@@ -86,9 +84,11 @@ def analyze_with_llm(state: PipelineState) -> PipelineState:
     print(f"[LLMAnalysis] Batch size       : {BATCH_SIZE}")
     llm_config = usage_config()
 
-    with tqdm(total=len(to_process), desc="Generating summaries") as progress:
-        for batch in _chunks(to_process, BATCH_SIZE):
-            with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch))) as executor:
+    # Keep one bounded executor for the complete run. Batches remain checkpoints,
+    # while worker threads are reused across batches.
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        with tqdm(total=len(to_process), desc="Generating summaries") as progress:
+            for batch in _chunks(to_process, BATCH_SIZE):
                 futures = [executor.submit(_analyse_file, file_info, llm_config) for file_info in batch]
                 for future in as_completed(futures):
                     file_info, ok, error = future.result()
@@ -99,8 +99,6 @@ def analyze_with_llm(state: PipelineState) -> PipelineState:
                         failed += 1
                     save_file_cache(cache_dir, file_info)
                     progress.update(1)
-            if BATCH_PAUSE_SECONDS > 0:
-                time.sleep(BATCH_PAUSE_SECONDS)
     state.files = [load_file_cache(cache_dir, f.path) or f for f in state.files]
 
     print(f"\n[LLMAnalysis] Done - success: {success}, failed: {failed}")

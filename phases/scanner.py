@@ -12,10 +12,11 @@ from tqdm import tqdm
 from models import FileInfo, PipelineState
 from parsers.language_detector import detect_language, should_skip_dir, is_parseable
 from config import CACHE_DIR
+from phases.file_analysis import get_repo_cache_key
 SCAN_CACHE_FILE = "scan_result.json"
 
 def _cache_path(state: PipelineState) -> Path:
-    cache_dir = Path(CACHE_DIR) / state.knowledge_id
+    cache_dir = Path(CACHE_DIR) / get_repo_cache_key(state.repo_path)
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / SCAN_CACHE_FILE
 

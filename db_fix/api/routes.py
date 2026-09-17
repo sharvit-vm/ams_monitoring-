@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from db_fix.agents.db_fix_agent import DBFixAgent
 from db_fix.models.request import RCARequest
 from db_fix.utils.logger import logger
-from dashboard_state import latest_execution, record_execution
+from dashboard_state import execution_for_session, record_execution
 from governance.approvals import approval_store
 from governance.telemetry import emit_governance_event
 from observability.token_usage import workflow_usage
@@ -40,10 +40,11 @@ def _execute_db_fix_plan(plan) -> dict:
 approval_store.register_executor("db_fix", _execute_db_fix_plan)
 
 def _record_remediation_dashboard_update(plan) -> None:
-    current = latest_execution()
+    current = execution_for_session(plan.session_id)
     if not current or not isinstance(current.get("response"), dict):
         return
     response = dict(current["response"])
+    response["workflow_session_id"] = plan.session_id
     plan_payload = plan.model_dump()
     response["fix_agent"] = plan_payload
     if plan.execution_result:
@@ -115,13 +116,13 @@ def get_remediation_plan(approval_id: str):
 @router.post("/remediations/{approval_id}/approve")
 def approve_remediation(approval_id: str, decision: ApprovalDecision):
     try:
-        plan = approval_store.approve_and_execute(
+        plan, job_id = approval_store.enqueue_approval(
             approval_id,
             approver=decision.approver,
             reason=decision.reason,
-            on_update=_record_remediation_dashboard_update,
         )
-        return {"status": plan.status, "remediation_plan": plan.model_dump()}
+        _record_remediation_dashboard_update(plan)
+        return JSONResponse(status_code=202, content={"status": plan.status, "job_id": job_id, "remediation_plan": plan.model_dump(mode="json")})
     except KeyError:
         return JSONResponse(status_code=404, content={"status": "not_found", "approval_id": approval_id})
     except Exception as e:
