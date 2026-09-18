@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -196,6 +197,8 @@ def trace_span(
     """
     client = _get_langfuse_client()
     observation = None
+    span_manager = None
+    attributes_manager = None
     start = time.perf_counter()
     merged_metadata = {
         "event_id": event_id,
@@ -203,36 +206,57 @@ def trace_span(
         "agent": agent,
         **(metadata or {}),
     }
-    try:
-        if client and hasattr(client, "start_as_current_observation"):
-            # Langfuse propagates session_id through the active trace context.
-            # Keeping it outside the observation call works with the current SDK
-            # and ensures child observations inherit the same workflow session.
+    if client and hasattr(client, "start_as_current_observation"):
+        try:
             from langfuse import propagate_attributes
 
-            with propagate_attributes(
+            attributes_manager = propagate_attributes(
                 session_id=session_id or None,
                 metadata=merged_metadata,
-            ):
-                with client.start_as_current_observation(
-                    as_type="agent" if agent else "span",
-                    name=name,
-                    input=input_data,
-                    metadata=merged_metadata,
-                ) as observation:
-                    yield observation
-                    duration_ms = int((time.perf_counter() - start) * 1000)
-                    if hasattr(observation, "update"):
-                        observation.update(
-                            output={"status": "completed", "duration_ms": duration_ms},
-                            metadata=merged_metadata,
-                        )
-        else:
-            yield observation
-    except Exception as exc:  # pragma: no cover - optional dependency/runtime
-        print(f"[observability] Langfuse span skipped; name={name} error={exc}")
-        yield None
+            )
+            attributes_manager.__enter__()
+        except Exception as exc:  # pragma: no cover - optional SDK behavior
+            attributes_manager = None
+            print(f"[observability] Langfuse session propagation skipped; name={name} error={exc}")
+        try:
+            span_manager = client.start_as_current_observation(
+                as_type="agent" if agent else "span",
+                name=name,
+                input=input_data,
+                metadata=merged_metadata,
+            )
+            observation = span_manager.__enter__()
+        except Exception as exc:  # pragma: no cover - optional dependency/runtime
+            span_manager = None
+            print(f"[observability] Langfuse span skipped; name={name} error={exc}")
+
+    error_info = (None, None, None)
+    try:
+        # Yield exactly once so tracing failures cannot mask workflow errors.
+        yield observation
+    except BaseException:
+        error_info = sys.exc_info()
+        raise
     finally:
+        if observation is not None and error_info[0] is None:
+            try:
+                if hasattr(observation, "update"):
+                    observation.update(
+                        output={"status": "completed", "duration_ms": int((time.perf_counter() - start) * 1000)},
+                        metadata=merged_metadata,
+                    )
+            except Exception as exc:  # pragma: no cover - optional dependency/runtime
+                print(f"[observability] Langfuse span update failed; name={name} error={exc}")
+        if span_manager is not None:
+            try:
+                span_manager.__exit__(*error_info)
+            except Exception as exc:  # pragma: no cover - optional dependency/runtime
+                print(f"[observability] Langfuse span close failed; name={name} error={exc}")
+        if attributes_manager is not None:
+            try:
+                attributes_manager.__exit__(*error_info)
+            except Exception as exc:  # pragma: no cover - optional dependency/runtime
+                print(f"[observability] Langfuse session close failed; name={name} error={exc}")
         if client and _enabled(os.getenv("LANGFUSE_FLUSH_ON_SPAN"), default=True):
             langfuse_flush()
 
