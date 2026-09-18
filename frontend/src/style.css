@@ -923,6 +923,377 @@ button, input, textarea {
   }
 }
 
+/* ValueMomentum brand treatment */
+:root {
+  --vm-navy: #0b2438;
+  --vm-navy-deep: #071a2a;
+  --vm-teal: #00a6a6;
+  --vm-teal-soft: #e5f7f5;
+  --vm-orange: #f5a623;
+  --vm-ink: #17324a;
+}
+
+.left-rail {
+  width: 88px;
+  background: linear-gradient(180deg, var(--vm-navy) 0%, var(--vm-navy-deep) 100%);
+  border-right: 0;
+  box-shadow: 6px 0 22px rgba(7, 26, 42, 0.14);
+}
+
+.rail-mark {
+  width: 58px;
+  height: 38px;
+  border: 0;
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--vm-navy);
+  font-size: 14px;
+  letter-spacing: .06em;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, .16);
+}
+
+.rail-nav {
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.rail-button {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  color: #9bb4c5;
+}
+
+.rail-button:hover,
+.rail-button.active {
+  background: rgba(0, 166, 166, .18);
+  color: #ffffff;
+  box-shadow: inset 3px 0 var(--vm-teal);
+}
+
+.main-shell {
+  background: #f5f8fa;
+}
+
+.source-control .MuiInputLabel-root,
+.source-control .MuiSelect-select {
+  color: #087b7b;
+}
+
+.source-control .MuiOutlinedInput-notchedOutline {
+  border-color: #a8dcd6 !important;
+}
+
+.tab,
+.source-action-btn,
+.ghost-btn .MuiSvgIcon-root {
+  color: var(--vm-teal) !important;
+}
+
+.tab.active::after {
+  background: var(--vm-teal);
+}
+
+.workflow-card.completed {
+  border-left-color: var(--vm-teal);
+}
+
+.workflow-card.running {
+  border-left-color: var(--vm-orange);
+}
+
+.status-pill.completed {
+  background: var(--vm-teal-soft);
+  color: #087b7b;
+  border-color: #a8dcd6;
+}
+
+.status-pill.running {
+  background: #fff5e2;
+  color: #9a6200;
+  border-color: #f3ce8d;
+}
+
+.approval-gate-card {
+  border-color: #f0c875;
+}
+
+.approval-gate-icon {
+  color: #b87500;
+  background: #fff3da;
+}
+
+.detail-page {
+  width: min(1240px, 100%);
+  margin: 0 auto;
+  padding: 8px 0 28px;
+}
+
+.detail-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  margin-bottom: 20px;
+}
+
+.detail-kicker,
+.detail-panel-heading span {
+  color: #71879a;
+  font: 600 10px "DM Mono", monospace;
+  letter-spacing: .1em;
+}
+
+.detail-title {
+  color: #1a2e43;
+  font-size: 25px !important;
+  font-weight: 800 !important;
+  margin-top: 7px !important;
+}
+
+.detail-subtitle {
+  color: #718396;
+  font-size: 12px !important;
+  margin-top: 4px !important;
+}
+
+.detail-state {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid #b9ded8;
+  border-radius: 8px;
+  background: #effaf8;
+  color: #087b7b;
+  font: 500 10px "DM Mono", monospace;
+}
+
+.detail-state .online-dot {
+  width: 6px;
+  height: 6px;
+  box-shadow: none;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(330px, .7fr);
+  gap: 16px;
+}
+
+.detail-column {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.detail-panel {
+  border: 1px solid #d5e0eb;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 5px 18px rgba(42, 67, 91, .05);
+  padding: 20px;
+}
+
+.detail-panel-heading {
+  border-bottom: 1px solid #e5ebf1;
+  padding-bottom: 14px;
+  margin-bottom: 15px;
+}
+
+.detail-panel-heading p,
+.detail-panel-heading .MuiTypography-root {
+  color: #1a2e43;
+  font-size: 16px;
+  font-weight: 750;
+  margin-top: 6px;
+}
+
+.incident-fields {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px 12px;
+}
+
+.incident-fields span,
+.incident-fields strong {
+  display: block;
+}
+
+.incident-fields span {
+  color: #8193a2;
+  font-size: 10px;
+}
+
+.incident-fields strong {
+  color: #29445c;
+  font: 600 12px "DM Mono", monospace;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.root-cause-detail {
+  border-left: 3px solid #8f73db;
+  padding: 3px 0 3px 13px;
+}
+
+.root-cause-detail span {
+  color: #8068c7;
+  font: 600 9px "DM Mono", monospace;
+  letter-spacing: .1em;
+}
+
+.root-cause-detail .MuiTypography-root {
+  color: #536a7c;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+
+.evidence-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 17px;
+}
+
+.evidence-list span {
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: #f0f5fa;
+  color: #5e768a;
+  font: 10px "DM Mono", monospace;
+}
+
+.timeline {
+  padding: 3px 5px;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 12px;
+  position: relative;
+  min-height: 55px;
+}
+
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #00a6a6;
+  border: 3px solid #dcf3f0;
+  margin-top: 3px;
+  z-index: 1;
+}
+
+.timeline-item i {
+  position: absolute;
+  left: 4px;
+  top: 13px;
+  bottom: -2px;
+  width: 2px;
+  background: #d5e9e7;
+}
+
+.timeline-item strong,
+.timeline-item small {
+  display: block;
+}
+
+.timeline-item strong {
+  color: #29445c;
+  font-size: 11px;
+}
+
+.timeline-item small {
+  color: #78909e;
+  font: 10px "DM Mono", monospace;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.recommendation {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  color: #587083;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 9px 0;
+  border-bottom: 1px solid #edf1f4;
+}
+
+.recommendation:last-child { border-bottom: 0; }
+.recommendation .MuiSvgIcon-root { color: #00a6a6; font-size: 17px; }
+
+.metric-table-row,
+.latency-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  padding: 11px 0;
+  border-bottom: 1px solid #edf1f4;
+}
+
+.metric-table-row:last-child,
+.latency-row:last-child { border-bottom: 0; }
+.metric-table-row span,
+.metric-table-row small { display: block; }
+.metric-table-row span { color: #536c80; font-size: 11px; }
+.metric-table-row small { color: #91a0ac; font-size: 9px; margin-top: 3px; }
+.metric-table-row strong { color: #26435b; font: 600 11px "DM Mono", monospace; }
+
+.latency-row > span { color: #60798c; font-size: 11px; text-transform: capitalize; }
+.latency-row > div { display: flex; align-items: center; gap: 10px; min-width: 52%; }
+.latency-row i { display: block; height: 7px; border-radius: 5px; background: linear-gradient(90deg, #00a6a6, #65cfc5); }
+.latency-row strong { color: #38566d; font: 600 10px "DM Mono", monospace; white-space: nowrap; }
+
+.model-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.model-summary div { border: 1px solid #e4ebf1; border-radius: 7px; padding: 12px; background: #f9fbfc; }
+.model-summary strong,.model-summary span { display: block; }
+.model-summary strong { color: #29445c; font: 600 17px "DM Mono", monospace; }
+.model-summary span { color: #8193a2; font-size: 9px; margin-top: 5px; }
+
+.approval-detail-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 38px 1fr 18px;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #e0e8ef;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 13px;
+  margin-bottom: 10px;
+  text-align: left;
+}
+
+.approval-detail-row:hover { border-color: #8bcfc8; background: #f5fcfb; }
+.approval-detail-row:last-child { margin-bottom: 0; }
+.approval-detail-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; color: #ae7108; background: #fff2d8; }
+.approval-detail-icon .MuiSvgIcon-root { font-size: 19px; }
+.approval-detail-row strong,.approval-detail-row span,.approval-detail-row small { display: block; }
+.approval-detail-row strong { color: #29445c; font-size: 12px; }
+.approval-detail-row span { color: #6d8494; font-size: 10px; margin-top: 4px; }
+.approval-detail-row small { color: #a17a32; font: 9px "DM Mono", monospace; margin-top: 6px; }
+.approval-detail-row > .MuiSvgIcon-root { color: #91a6b5; font-size: 17px; }
+
+.owner-card { border-left: 3px solid #00a6a6; padding: 10px 0 10px 12px; margin-bottom: 12px; background: #f5fbfa; }
+.owner-card span,.owner-card strong { display: block; }
+.owner-card span { color: #738897; font-size: 10px; }
+.owner-card strong { color: #206b6a; font: 600 11px "DM Mono", monospace; margin-top: 5px; }
+.policy-note { color: #7c909e; font-size: 10px !important; line-height: 1.5 !important; }
+.empty-detail { display: grid; place-items: center; gap: 9px; min-height: 120px; color: #8196a3; text-align: center; font-size: 11px; }
+.empty-detail .MuiSvgIcon-root { color: #8bbdb8; }
+
+@media (max-width: 760px) {
+  .detail-heading { align-items: flex-start; gap: 14px; flex-direction: column; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .incident-fields { grid-template-columns: 1fr 1fr; }
+  .latency-row > div { min-width: 48%; }
+}
+
 @media (max-width: 640px) {
   .explorer-shell {
     padding: 14px 10px 24px;
@@ -936,5 +1307,348 @@ button, input, textarea {
     grid-column: 2;
     justify-self: start;
     margin-top: 6px;
+  }
+}
+
+/* Operations-console visual pass */
+:root {
+  font-family: "Manrope", "Segoe UI", sans-serif;
+  background: #f3f6fa;
+}
+
+body {
+  background: #f3f6fa;
+}
+
+.explorer-shell {
+  background: #f3f6fa;
+}
+
+.left-rail {
+  width: 78px;
+  background: #172332;
+  padding-top: 18px;
+  box-shadow: 5px 0 18px rgba(22, 38, 56, 0.08);
+}
+
+.rail-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border-color: #b9d6ff;
+  color: #ffffff;
+  background: #2f6ee8;
+  box-shadow: 0 8px 18px rgba(47, 110, 232, 0.25);
+}
+
+.rail-nav {
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.rail-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  color: #9eafc2;
+}
+
+.rail-button:hover,
+.rail-button.active {
+  background: #2b3c51;
+  color: #ffffff;
+}
+
+.main-shell {
+  padding: 22px 30px 44px;
+  background: #f3f6fa;
+}
+
+.explorer-header {
+  padding: 0 0 18px;
+}
+
+.top-bar {
+  gap: 12px;
+  padding: 0;
+  overflow: visible;
+}
+
+.source-control {
+  min-width: 150px;
+  background: #ffffff;
+}
+
+.status-control {
+  min-width: 112px;
+}
+
+.date-control {
+  min-width: 145px;
+}
+
+.source-control .MuiOutlinedInput-root,
+.source-control {
+  background: #ffffff;
+}
+
+.source-control .MuiOutlinedInput-root {
+  height: 44px;
+  border-radius: 9px;
+}
+
+.source-control .MuiInputLabel-root,
+.source-control .MuiSelect-select {
+  color: #40566b;
+}
+
+.source-control .MuiInputLabel-root {
+  background: #f3f6fa;
+}
+
+.source-control .MuiOutlinedInput-notchedOutline {
+  border-color: #d5dee8 !important;
+}
+
+.summary-stat {
+  min-width: 94px;
+  height: 44px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  border-color: #dce4ec;
+  background: #ffffff;
+}
+
+.summary-stat span {
+  color: #7b8c9c;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.summary-stat b {
+  color: #203247;
+  font-size: 13px;
+}
+
+.workflow-tabbar {
+  margin: 0 0 20px;
+  padding: 0 2px;
+  border-bottom-color: #dce4ec;
+}
+
+.tab {
+  color: #1f5fd0;
+  font-size: 16px;
+  padding: 12px 4px 14px;
+}
+
+.workflow-actions {
+  padding-right: 0;
+}
+
+.ghost-btn {
+  height: 36px;
+  min-width: 138px !important;
+  border-radius: 8px !important;
+  border-color: #d3deeb !important;
+  color: #2d4963 !important;
+  background: #ffffff !important;
+  font-size: 11px !important;
+}
+
+.header-pill {
+  height: 36px;
+  min-width: 148px;
+  border-radius: 8px;
+  border-color: #d3deeb;
+  background: #ffffff;
+}
+
+.explorer-canvas {
+  gap: 16px;
+  padding: 0 0 24px;
+}
+
+.workflow-stack,
+.notification-row,
+.workflow-sequence,
+.branch-row,
+.bottom-notifications {
+  width: min(1240px, 100%);
+}
+
+.workflow-stack {
+  gap: 14px;
+}
+
+.workflow-card {
+  width: min(780px, calc(100vw - 150px));
+  min-height: 108px;
+  border-radius: 14px;
+  border-color: #d5e0eb;
+  background: #ffffff;
+  box-shadow: 0 5px 18px rgba(42, 67, 91, 0.06);
+  grid-template-columns: 64px 1fr;
+  gap: 16px;
+  padding: 18px 22px;
+}
+
+.workflow-card.compact {
+  min-height: 116px;
+}
+
+.workflow-card:hover,
+.workflow-card.clickable:hover {
+  border-color: #aac5e9;
+  box-shadow: 0 10px 26px rgba(42, 91, 158, 0.11);
+  transform: translateY(-1px);
+}
+
+.workflow-card.completed {
+  border-left: 4px solid #36a86d;
+}
+
+.workflow-card.running {
+  border-left: 4px solid #3576dc;
+  background: #fbfdff;
+}
+
+.workflow-card.failed {
+  border-left: 4px solid #dc5c66;
+}
+
+.workflow-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #f0f5fb;
+  font-size: 34px;
+}
+
+.workflow-card.accent-blue .workflow-card-icon {
+  color: #2f6fdc;
+  background: #eaf2ff;
+}
+
+.workflow-card.accent-green .workflow-card-icon {
+  color: #24935d;
+  background: #eaf8f0;
+}
+
+.workflow-card.accent-purple .workflow-card-icon {
+  color: #7550c7;
+  background: #f1edff;
+}
+
+.sn-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.workflow-card-head {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 14px;
+}
+
+.step-badge {
+  width: 27px;
+  height: 27px;
+  background: #eef3f8;
+  color: #536b81;
+  font-size: 11px;
+}
+
+.workflow-card-title {
+  font-size: 16px !important;
+  color: #1a2e43 !important;
+}
+
+.workflow-card-subtitle {
+  color: #718396;
+  font-size: 11px !important;
+}
+
+.workflow-card-metrics {
+  margin-top: 14px;
+  gap: 8px 18px;
+  color: #4c657a;
+  font-size: 11px;
+}
+
+.metric-key {
+  color: #8a9baa;
+}
+
+.metric-value {
+  color: #35516a;
+}
+
+.status-pill {
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 10px;
+  letter-spacing: .02em;
+}
+
+.connector-line,
+.branch-spine-line,
+.branch-spine-h,
+.merge-line,
+.bottom-notifications::before {
+  background: #b9c9d8;
+}
+
+.branch-spine {
+  width: min(780px, calc(100vw - 150px));
+}
+
+.branch-row {
+  gap: 16px;
+}
+
+.branch-card .workflow-card {
+  width: 100%;
+  min-height: 124px;
+}
+
+.approval-gate-card {
+  width: min(780px, calc(100vw - 150px));
+  border-radius: 12px;
+  border-color: #e3bd78;
+  background: #fffaf1;
+  padding: 14px 20px;
+}
+
+.approval-gate-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #fff0d3;
+  color: #b97916;
+}
+
+.branch-tag {
+  border-radius: 999px;
+  background: #eef4ff;
+  font-size: 10px;
+}
+
+.bottom-notifications .workflow-card {
+  min-height: 142px;
+  box-shadow: 0 4px 15px rgba(42, 67, 91, 0.05);
+}
+
+@media (max-width: 980px) {
+  .main-shell {
+    padding: 16px 14px 28px;
+  }
+
+  .workflow-card,
+  .approval-gate-card,
+  .branch-spine {
+    width: min(780px, calc(100vw - 32px));
   }
 }

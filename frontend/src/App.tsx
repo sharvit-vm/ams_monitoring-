@@ -42,10 +42,25 @@ import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 import GroupsOutlinedIcon from '@mui/icons-material/GroupsOutlined';
 import BarChartOutlinedIcon from '@mui/icons-material/BarChartOutlined';
+import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
+import InputRoundedIcon from '@mui/icons-material/InputRounded';
+import TransformRoundedIcon from '@mui/icons-material/TransformRounded';
+import PolicyRoundedIcon from '@mui/icons-material/PolicyRounded';
+import CategoryRoundedIcon from '@mui/icons-material/CategoryRounded';
+import PsychologyRoundedIcon from '@mui/icons-material/PsychologyRounded';
+import ApprovalRoundedIcon from '@mui/icons-material/ApprovalRounded';
+import BuildCircleRoundedIcon from '@mui/icons-material/BuildCircleRounded';
+import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded';
+import NotificationsActiveRoundedIcon from '@mui/icons-material/NotificationsActiveRounded';
 import { API_BASE_URL, approveRemediation, getLatestExecution, getPendingApprovals, getWorkflow, rejectRemediation, type RemediationPlan, type SourcePlatform, type WorkflowNode } from './api';
-import { asRecord, deriveExecution } from './derive';
+import { asRecord, chartRows, deriveExecution } from './derive';
 
 type NodeStatus = 'completed' | 'running' | 'pending' | 'skipped' | 'failed';
+type DashboardView = 'overview' | 'incidents' | 'observability' | 'approvals';
+
+const L2_APPROVER_EMAIL = 'srivani@valuemomentum';
+const L1_APPROVER_EMAIL = 'srivani@valuemomentum';
+const L3_APPROVER_EMAIL = 'sharvit@valuemomentum';
 
 type DisplayNode = {
   id: string;
@@ -88,6 +103,7 @@ export function App() {
   const [decisionNote, setDecisionNote] = useState('');
   const [approver, setApprover] = useState('approver@company.com');
   const [approvalError, setApprovalError] = useState('');
+  const [activeView, setActiveView] = useState<DashboardView>('overview');
 
   const rawResponse = latest.data?.execution?.response ?? {};
   const execution = useMemo(() => deriveExecution(rawResponse), [rawResponse]);
@@ -96,6 +112,12 @@ export function App() {
     if (!selectedApprovalId) return undefined;
     return approvals.data?.approvals.find((item) => item.approval_id === selectedApprovalId);
   }, [approvals.data?.approvals, selectedApprovalId]);
+
+  useEffect(() => {
+    if (selectedApproval) {
+      setApprover(approverForApproval(selectedApproval));
+    }
+  }, [selectedApproval]);
   const nodes = workflow.data?.nodes ?? [];
   const sourcePlatforms = workflow.data?.source_platforms ?? [];
   const sourceOptions = sourcePlatforms.length
@@ -116,11 +138,10 @@ export function App() {
   const selectedPlatformUrl = getSourceCreateUrl(selectedPlatform);
   const selectedPlatformHasExecution = hasRecordData(execution.response) && executionSourceKey === selectedSource;
   const updatedAt = latest.data?.execution?.recorded_at;
-  const dashboardSummary = latest.data?.summary;
-  const totalSteps = dashboardSummary?.total_steps ?? countWorkflowSteps(workflow.data?.nodes ?? []);
-  const completedSteps = dashboardSummary?.completed ?? activeNodes.filter((node) => node.status === 'completed').length;
-  const overallConfidence = formatPercentSummary(dashboardSummary?.overall_confidence ?? deriveOverallConfidence(execution));
-  const workflowTime = formatDurationSummary(dashboardSummary?.workflow_time_ms ?? deriveWorkflowTimeMs(execution));
+  const totalSteps = countWorkflowSteps(nodes);
+  const completedSteps = activeNodes.filter((node) => node.status === 'completed').length;
+  const overallConfidence = formatPercentSummary(hasRecordData(execution.response) ? deriveOverallConfidence(execution) : undefined);
+  const workflowTime = formatDurationSummary(hasRecordData(execution.response) ? deriveWorkflowTimeMs(execution) : undefined);
 
   useEffect(() => {
     const streamUrl = `${API_BASE_URL.replace(/\/$/, '')}/dashboard/executions/stream`;
@@ -176,16 +197,13 @@ export function App() {
     <Box className="explorer-shell">
       <aside className="left-rail">
         <Box className="rail-brand">
-          <Box className="rail-mark">P</Box>
+          <Box className="rail-mark">AMS</Box>
         </Box>
         <nav className="rail-nav">
-          <button className="rail-button active" title="Overview"><HomeOutlinedIcon /></button>
-          <button className="rail-button" title="Intake"><ListAltOutlinedIcon /></button>
-          <button className="rail-button" title="Guardrails"><SecurityOutlinedIcon /></button>
-          <button className="rail-button" title="Approvals"><GroupsOutlinedIcon /></button>
-          <button className="rail-button" title="Observability"><BarChartOutlinedIcon /></button>
-          <button className="rail-button" title="Docs"><DescriptionOutlinedIcon /></button>
-          <button className="rail-button" title="Settings"><SettingsOutlinedIcon /></button>
+          <button className={`rail-button ${activeView === 'overview' ? 'active' : ''}`} title="Overview" onClick={() => setActiveView('overview')}><HomeOutlinedIcon /></button>
+          <button className={`rail-button ${activeView === 'incidents' ? 'active' : ''}`} title="Incidents" onClick={() => setActiveView('incidents')}><ListAltOutlinedIcon /></button>
+          <button className={`rail-button ${activeView === 'observability' ? 'active' : ''}`} title="Observability" onClick={() => setActiveView('observability')}><BarChartOutlinedIcon /></button>
+          <button className={`rail-button ${activeView === 'approvals' ? 'active' : ''}`} title="Approvals" onClick={() => setActiveView('approvals')}><GroupsOutlinedIcon /></button>
         </nav>
       </aside>
 
@@ -247,6 +265,7 @@ export function App() {
           </Stack>
         </header>
 
+        {activeView === 'overview' ? <>
         <Box className="workflow-tabbar">
           <button className="tab active">Workflow</button>
           <Box className="workflow-actions">
@@ -299,6 +318,14 @@ export function App() {
             ))}
           </Box>
         </main>
+        </> : <DashboardDetailView
+          view={activeView}
+          execution={execution}
+          metrics={execution.overallObservability}
+          llmMetrics={execution.llmObservability}
+          approvals={approvals.data?.approvals ?? []}
+          onSelectApproval={setSelectedApprovalId}
+        />}
 
         <ApprovalDialog
           approval={selectedApproval}
@@ -324,6 +351,63 @@ export function App() {
     </Box>
   );
 }
+
+function DashboardDetailView({
+  view,
+  execution,
+  metrics,
+  llmMetrics,
+  approvals,
+  onSelectApproval,
+}: {
+  view: Exclude<DashboardView, 'overview'>;
+  execution: ReturnType<typeof deriveExecution>;
+  metrics: ReturnType<typeof deriveExecution>['overallObservability'];
+  llmMetrics: ReturnType<typeof deriveExecution>['llmObservability'];
+  approvals: RemediationPlan[];
+  onSelectApproval: (approvalId: string) => void;
+}) {
+  const titles = {
+    incidents: ['Incidents', 'Latest incident context, routing, RCA, and resolution evidence.'],
+    observability: ['Observability', 'Runtime, stage latency, database health, and model usage.'],
+    approvals: ['Approvals', 'Review remediation plans before agents execute changes.'],
+  } as const;
+  const [title, subtitle] = titles[view];
+
+  return (
+    <main className="detail-page">
+      <Box className="detail-heading"><Box><span className="detail-kicker">AMS MONITORING / {title.toUpperCase()}</span><Typography className="detail-title">{title}</Typography><Typography className="detail-subtitle">{subtitle}</Typography></Box><Box className="detail-state"><span className="online-dot" /> Live backend data</Box></Box>
+      {view === 'incidents' && <IncidentDetail execution={execution} />}
+      {view === 'observability' && <ObservabilityDetail execution={execution} metrics={metrics} llmMetrics={llmMetrics} />}
+      {view === 'approvals' && <ApprovalsDetail approvals={approvals} onSelectApproval={onSelectApproval} />}
+    </main>
+  );
+}
+
+function IncidentDetail({ execution }: { execution: ReturnType<typeof deriveExecution> }) {
+  const incident = execution.incident;
+  const summary = execution.rcaReport.incidentSummary;
+  const timeline = execution.rcaReport.executionTimeline;
+  const fields = [
+    ['Incident ID', incident.id], ['Status', incident.status], ['Priority', incident.priority],
+    ['Application', incident.application], ['Technology', incident.technology], ['Support level', execution.categorisation.support_level],
+    ['Assigned agent', incident.assignedAgent], ['Business impact', incident.businessImpact],
+  ];
+  return <Box className="detail-grid"><Box className="detail-column"><DetailPanel kicker="INCIDENT RECORD" title={String(summary.title || 'Latest incident')}><Box className="incident-fields">{fields.map(([label, value]) => <Box key={label}><span>{label}</span><strong>{String(value || '—')}</strong></Box>)}</Box></DetailPanel><DetailPanel kicker="ROOT CAUSE ANALYSIS" title="Agent findings"><Box className="root-cause-detail"><span>IDENTIFIED ROOT CAUSE</span><Typography>{String(execution.rcaReport.identifiedRootCause || 'No root cause has been recorded for the latest execution.')}</Typography></Box><Box className="evidence-list">{execution.rcaReport.affectedComponents.map((component) => <span key={String(component)}>{String(component)}</span>)}</Box></DetailPanel></Box><Box className="detail-column"><DetailPanel kicker="EXECUTION TIMELINE" title="Incident journey"><Box className="timeline">{timeline.length ? timeline.map((item, index) => <Box className="timeline-item" key={item}><span className="timeline-dot" /><Box><strong>{item.split(':')[0]}</strong><small>{item.slice(item.indexOf(':') + 1).trim()}</small></Box>{index < timeline.length - 1 ? <i /> : null}</Box>) : <EmptyDetail text="Timeline will populate after an incident is processed." />}</Box></DetailPanel><DetailPanel kicker="RECOMMENDATIONS" title="Next actions">{execution.rcaReport.recommendations.length ? execution.rcaReport.recommendations.map((item) => <Box className="recommendation" key={String(item)}><CheckCircleOutlineIcon /><span>{String(item)}</span></Box>) : <EmptyDetail text="No recommendations are available yet." />}</DetailPanel></Box></Box>;
+}
+
+function ObservabilityDetail({ execution, metrics, llmMetrics }: { execution: ReturnType<typeof deriveExecution>; metrics: ReturnType<typeof deriveExecution>['overallObservability']; llmMetrics: ReturnType<typeof deriveExecution>['llmObservability'] }) {
+  const stageRows = chartRows(asRecord(execution.dbMetrics));
+  const allMetrics = [...metrics, ...llmMetrics];
+  return <Box className="detail-grid"><Box className="detail-column"><DetailPanel kicker="RUNTIME METRICS" title="System telemetry"><Box className="metric-table">{allMetrics.length ? allMetrics.map((metric) => <Box className="metric-table-row" key={`${metric.source}-${metric.label}`}><span>{metric.label}<small>{metric.source}</small></span><strong>{String(metric.value)}</strong></Box>) : <EmptyDetail text="No telemetry has been returned by the latest execution." />}</Box></DetailPanel></Box><Box className="detail-column"><DetailPanel kicker="STAGE PERFORMANCE" title="Latency breakdown"><Box className="latency-list">{stageRows.length ? stageRows.map((row) => <Box className="latency-row" key={row.name}><span>{row.name}</span><Box><i style={{ width: `${Math.min(100, Math.max(8, row.ms / Math.max(...stageRows.map((item) => item.ms)) * 100))}%` }} /><strong>{Math.round(row.ms)} ms</strong></Box></Box>) : <EmptyDetail text="Stage duration metrics will appear after remediation runs." />}</Box></DetailPanel><DetailPanel kicker="MODEL USAGE" title="LLM activity"><Box className="model-summary">{llmMetrics.length ? llmMetrics.map((metric) => <Box key={metric.label}><strong>{String(metric.value)}</strong><span>{metric.label}</span></Box>) : <EmptyDetail text="No model calls recorded." />}</Box></DetailPanel></Box></Box>;
+}
+
+function ApprovalsDetail({ approvals, onSelectApproval }: { approvals: RemediationPlan[]; onSelectApproval: (approvalId: string) => void }) {
+  return <Box className="detail-grid approvals-view"><Box className="detail-column"><DetailPanel kicker="HUMAN-IN-THE-LOOP" title={`${approvals.length} pending approval${approvals.length === 1 ? '' : 's'}`}><Box className="approval-list">{approvals.length ? approvals.map((approval) => <button className="approval-detail-row" key={approval.approval_id} onClick={() => onSelectApproval(approval.approval_id)}><Box className="approval-detail-icon"><GroupsOutlinedIcon /></Box><Box><strong>{approval.issue_id || approval.approval_id}</strong><span>{approval.issue_summary || approval.recommended_action || 'Remediation plan awaiting review'}</span><small>{approval.agent_type || approval.target_type} · {approval.risk_level || 'Risk not specified'}</small></Box><ArrowForwardRoundedIcon /></button>) : <EmptyDetail text="The approval queue is clear." />}</Box></DetailPanel></Box><Box className="detail-column"><DetailPanel kicker="APPROVAL POLICY" title="Route ownership"><Box className="owner-card"><span>L1 / L2 remediation</span><strong>srivani@valuemomentum</strong></Box><Box className="owner-card"><span>L3 code remediation</span><strong>sharvit@valuemomentum</strong></Box><Typography className="policy-note">Selecting an approval opens the decision dialog with the route owner preassigned.</Typography></DetailPanel></Box></Box>;
+}
+
+function DetailPanel({ kicker, title, children }: { kicker: string; title: string; children: ReactNode }) { return <Box className="detail-panel"><Box className="detail-panel-heading"><Box><span>{kicker}</span><Typography>{title}</Typography></Box></Box>{children}</Box>; }
+function EmptyDetail({ text }: { text: string }) { return <Box className="empty-detail"><HourglassTopIcon /><span>{text}</span></Box>; }
 
 function WorkflowCard({
   index,
@@ -471,7 +555,7 @@ function NodeBlock({
             title={node.l2Status === 'skipped' ? 'L2 RCA (Skipped)' : 'L2 RCA'}
             subtitle="Medium Complexity"
             status={node.l2Status ?? 'pending'}
-            icon={<SettingsSuggestOutlinedIcon />}
+            icon={<PsychologyRoundedIcon />}
             metrics={node.l2Metrics ?? ['Waiting for L2 RCA result']}
           />
           <BranchRcaCard
@@ -479,7 +563,7 @@ function NodeBlock({
             title={node.l3Status === 'skipped' ? 'L3 RCA (Skipped)' : 'L3 RCA'}
             subtitle="High Complexity"
             status={node.l3Status ?? 'pending'}
-            icon={<CodeOutlinedIcon />}
+            icon={<FactCheckRoundedIcon />}
             metrics={node.l3Metrics ?? ['Waiting for categorization result']}
           />
         </Box>
@@ -495,7 +579,7 @@ function NodeBlock({
   if (node.id === 'db_fix') {
     const isCodeFixAgent = node.agentType === 'code_fix';
     const agentSubtitle = node.agentType || 'Awaiting agent selection';
-    const agentIcon = isCodeFixAgent ? <CodeOutlinedIcon /> : node.icon;
+    const agentIcon = isCodeFixAgent ? <BuildCircleRoundedIcon /> : node.icon;
     const approvalStatus = normaliseStatus(node.approvalStatus);
     const awaitingApproval = isWaitingStatus(approvalStatus);
     const approvalCompleted = [
@@ -761,7 +845,14 @@ function ApprovalDialog({
           <Meta label="Risk level" value={approval?.risk_level ?? 'N/A'} />
         </Box>
         <Divider className="approval-divider" />
-        <TextField label="Approver" value={approver} onChange={(event) => onApproverChange(event.target.value)} fullWidth size="small" />
+        <TextField
+          label="Approver email"
+          value={approver}
+          fullWidth
+          size="small"
+          helperText="Assigned automatically from the L2/L3 remediation route"
+          InputProps={{ readOnly: true }}
+        />
         <TextField
           label="Decision reason"
           value={decisionNote}
@@ -815,6 +906,13 @@ function isFailedStatus(value: unknown) {
 
 function routeLevel(execution: ReturnType<typeof deriveExecution>) {
   return normaliseStatus(execution.categorisation.support_level || execution.categorisation.level || execution.categorisation.rca_level);
+}
+
+function approverForApproval(approval: RemediationPlan) {
+  const route = `${approval.agent_type} ${approval.target_type}`.toLowerCase();
+  if (route.includes('code') || route.includes('l3')) return L3_APPROVER_EMAIL;
+  if (route.includes('l1')) return L1_APPROVER_EMAIL;
+  return L2_APPROVER_EMAIL;
 }
 
 function normaliseAgentType(value: unknown) {
@@ -900,7 +998,7 @@ function firstValue(...values: unknown[]) {
 
 function countWorkflowSteps(nodes: WorkflowNode[]) {
   const visibleBackendSteps = nodes.filter((node) => !['l1_placeholder', 'codefix'].includes(node.id)).length;
-  return visibleBackendSteps || 13;
+  return visibleBackendSteps;
 }
 
 function deriveOverallConfidence(execution: ReturnType<typeof deriveExecution>) {
@@ -931,12 +1029,12 @@ function deriveWorkflowTimeMs(execution: ReturnType<typeof deriveExecution>) {
 }
 
 function formatPercentSummary(value: unknown) {
-  if (typeof value !== 'number') return '0%';
+  if (typeof value !== 'number') return '—';
   return `${Math.round(value <= 1 ? value * 100 : value)}%`;
 }
 
 function formatDurationSummary(value: unknown) {
-  if (typeof value !== 'number') return '0 s';
+  if (typeof value !== 'number') return '—';
   if (value >= 1000) return `${(value / 1000).toFixed(2)} s`;
   return `${Math.round(value)} ms`;
 }
@@ -1181,12 +1279,16 @@ function accentForNode(id: string) {
 }
 
 function iconForNode(id: string) {
-  if (id === 'guardrails') return <SecurityOutlinedIcon />;
-  if (id === 'categorization') return <AccountTreeOutlinedIcon />;
-  if (id === 'l2_rca' || id === 'fix_agent') return <SettingsSuggestOutlinedIcon />;
-  if (id === 'l3_rca') return <CodeOutlinedIcon />;
+  if (id === 'connector') return <InputRoundedIcon />;
+  if (id === 'normalizer') return <TransformRoundedIcon />;
+  if (id === 'guardrails') return <PolicyRoundedIcon />;
+  if (id === 'categorization') return <CategoryRoundedIcon />;
+  if (id === 'l2_rca') return <PsychologyRoundedIcon />;
+  if (id === 'l3_rca') return <FactCheckRoundedIcon />;
+  if (id === 'human_approval') return <ApprovalRoundedIcon />;
+  if (id === 'fix_agent') return <BuildCircleRoundedIcon />;
   if (id === 'db_fix') return <DatabaseOutlinedIcon />;
-  if (id === 'servicenow') return <PaperPlaneOutlinedIcon />;
+  if (id === 'servicenow') return <NotificationsActiveRoundedIcon />;
   if (id === 'jira') return <BugReportOutlinedIcon />;
   if (id === 'github') return <CodeOutlinedIcon />;
   return <HourglassTopIcon />;
