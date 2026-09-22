@@ -5,19 +5,19 @@ description: Language-agnostic, evidence-first L3 root cause analysis for code-l
 
 # L3 RCA Skill
 
-Use this skill for deep code RCA across any programming language. The goal is to identify the causal defect with evidence, not to restate the error message or stacktrace.x`x`x`
+Use this skill for deep code RCA across any programming language. The goal is to identify the causal defect with evidence, not to restate the error message or stacktrace.
 
 ## Core Principle
  
 RCA must explain this chain:
 
 `trigger -> bad input/state/config/dependency -> failing code path -> observed error`
-x`
 The failing line is the failure point. It is not automatically the root cause.
+Leave unsupported parts of this chain unknown rather than inventing a complete chain.
 
 ## Investigation Order
 
-1. Start from the first application-owned stack frame or the event's file/line/function.
+1. Start from a usable traceback location; use ranked RAG candidates when the traceback is missing or unusable. Retrieval also supplies additional context. Neither location source proves the causal defect or source revision.
 2. Read the failing source range before making claims.
 3. Map the failure line to the enclosing function, method, class, module, component, or handler using prefetched context and file summaries.
 4. Use `get_function_calls` when the failing function name is available.
@@ -32,6 +32,16 @@ The failing line is the failure point. It is not automatically the root cause.
 7. Stop expanding once the causal path is clear enough to produce evidence-backed RCA.
 8. State unknowns explicitly when graph data, source context, or stacktrace data is incomplete.
 
+## Representation and Conversion Checks
+
+- Preserve the exact representation of values from the incident and source. A value
+  shown without a prefix in an exception may have been normalized by a parser; inspect
+  the original input and the branch that handled it before calling it decimal,
+  hexadecimal, binary, octal, encoded, signed, or unsigned.
+- For conversion and range failures, prove the conversion rule from source before
+  claiming overflow. Check the selected branch, prefix handling, digit count, sign, and
+  fallback type before recommending a numeric-type change.
+
 ## Universal Failure Heuristics
 
 - Null/None/undefined/nil: identify the exact expression, then trace where that value should have been created, checked, injected, loaded, or returned.
@@ -45,10 +55,23 @@ The failing line is the failure point. It is not automatically the root cause.
 
 ## Evidence Rules
 
+- Use canonical source evidence IDs supplied in context or by read_source_evidence.
+- Static graph callers are possible relationships, not reported runtime execution.
+  Keep alternatives in related_paths rather than combining them into execution_path.
+- State the scope of the cause. An unknown upstream trigger does not disprove a
+  source-supported local defect; a claim about that trigger requires its own evidence.
+- Defect locations require a specific source line and a causal justification. A
+  retrieved method range is context, not a list of defective lines. Exact defect
+  lines may remain unknown when only a function-level cause can be established.
+- Keep cause support separate from repair readiness. A supported diagnosis remains
+  useful when implementation details need investigation. Never claim unrun tests passed.
 - Every root-cause claim must be supported by at least one source line, stacktrace frame, graph relationship, or prefetched context item.
 - Prefer direct evidence from source reads over assumptions from names.
 - Do not mark confidence as `high` unless the failing code was read and the causal path is clear.
-- Use `medium` when the likely cause is supported but one important caller/config/input source was not available.
+- Do not mark confidence as `high` when the file and line are correct but the causal
+  explanation depends on an unverified interpretation of the input representation.
+- Use `medium` when missing caller/config/input evidence leaves the claimed cause
+  uncertain, not merely because the upstream origin of an evidenced local defect is unknown.
 - Use `low` when RCA is mostly based on the stacktrace or incomplete context.
 - Do not list unrelated connected files as affected files.
 

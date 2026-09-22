@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
-from pinecone import Pinecone
 
 load_dotenv(override=True)
 
@@ -11,6 +10,9 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+VECTOR_STORE_PROVIDER = os.getenv("VECTOR_STORE_PROVIDER", "pinecone").strip().lower()
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "cache/chroma")
+CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "ams_rag_chunks")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -50,19 +52,21 @@ def get_neo4j_driver():
     return _neo4j_driver
 
 def get_pinecone_index():
-    """Returns a singleton Pinecone index client."""
+    """Returns a singleton Pinecone index client for legacy callers."""
     global _pinecone_index
     if _pinecone_index is None:
         if not PINECONE_API_KEY or not PINECONE_INDEX_NAME:
             raise ValueError("PINECONE_API_KEY and PINECONE_INDEX_NAME must be set in .env")
+        from pinecone import Pinecone
+
         pc = Pinecone(api_key=PINECONE_API_KEY)
         _pinecone_index = pc.Index(PINECONE_INDEX_NAME)
     return _pinecone_index
 
 def verify_connections():
     """
-    Call this once at startup to confirm both DBs are reachable.
-    Raises an exception immediately if either connection fails.
+    Call this once at startup to confirm required backing services are reachable.
+    Vector-store verification is provider-specific and skipped when disabled.
     """
     print("Verifying Neo4j connection...")
     driver = get_neo4j_driver()
@@ -70,14 +74,17 @@ def verify_connections():
         result = session.run("RETURN 'Neo4j connected' AS status")
         print(" ", result.single()["status"])
 
-    print("Verifying Pinecone connection...")
-    index = get_pinecone_index()
-    stats = index.describe_index_stats()
-    print(f"  Pinecone connected - total vectors: {stats['total_vector_count']}")
+    if VECTOR_STORE_PROVIDER == "pinecone":
+        print("Verifying Pinecone connection...")
+        index = get_pinecone_index()
+        stats = index.describe_index_stats()
+        print(f"  Pinecone connected - total vectors: {stats['total_vector_count']}")
+    elif VECTOR_STORE_PROVIDER == "chroma":
+        print(f"Chroma selected; persistent directory: {CHROMA_PERSIST_DIR}")
+    else:
+        print(f"Vector store disabled or external verification skipped; provider={VECTOR_STORE_PROVIDER}")
 
-    print("All connections verified.\n")
+    print("All configured connections verified.\n")
 
 if __name__ == "__main__":
     verify_connections()
-
-

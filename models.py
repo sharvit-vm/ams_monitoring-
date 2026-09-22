@@ -5,6 +5,13 @@ class ParameterInfo(BaseModel):
     name: str
     type_hint: Optional[str] = None
 
+class CallSite(BaseModel):
+    name: str
+    receiver: Optional[str] = None
+    receiver_type: Optional[str] = None
+    line: int
+    argument_count: int
+
 class FunctionInfo(BaseModel):
     name: str
     file_path: str
@@ -13,6 +20,7 @@ class FunctionInfo(BaseModel):
     parameters: List[ParameterInfo] = Field(default_factory=list)
     return_type: Optional[str] = None
     calls: List[str] = Field(default_factory=list)
+    call_sites: List[CallSite] = Field(default_factory=list)
     summary: Optional[str] = None
     is_method: bool = False
     class_name: Optional[str] = None
@@ -24,6 +32,9 @@ class ClassInfo(BaseModel):
     end_line: int
     methods: List[str] = Field(default_factory=list)
     base_classes: List[str] = Field(default_factory=list)
+    implemented_interfaces: List[str] = Field(default_factory=list)
+    extended_classes: List[str] = Field(default_factory=list)
+    is_interface: bool = False
     summary: Optional[str] = None
 
 class ImportInfo(BaseModel):
@@ -44,6 +55,8 @@ class ExportedSymbol(BaseModel):
     is_public: bool = True
 
 class FileInfo(BaseModel):
+    parser_version: Optional[str] = None
+    source_hash: Optional[str] = None
     path: str
     absolute_path: str
     language: str

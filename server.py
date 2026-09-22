@@ -315,6 +315,16 @@ async def _run_gateway(source: str, request: Request, *, include_raw_body: bool 
         if exc.status_code == 200:
             return JSONResponse({"status": "ignored", "reason": exc.detail}, status_code=200)
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except Exception as exc:
+        error_response = _json_safe_value({
+            "status": "workflow_failed",
+            "source": source_key,
+            "error": str(exc),
+            "reason": "Workflow failed after payload was received.",
+        })
+        record_execution(error_response)
+        print(f"[gateway] Failed {source_key} webhook; error={exc}")
+        return JSONResponse(error_response, status_code=500)
 
     # Authentication headers and raw signed bytes are never queued.
     source_event.headers = {}
