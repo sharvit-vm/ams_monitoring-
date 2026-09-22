@@ -10,6 +10,7 @@ from db_fix.utils.logger import logger
 from dashboard_state import execution_for_session, record_execution
 from governance.approvals import approval_store
 from governance.telemetry import emit_governance_event
+from observability.agent_trace import update_workflow_trace
 from observability.token_usage import workflow_usage
 
 
@@ -68,6 +69,26 @@ def _record_remediation_dashboard_update(plan) -> None:
     response["status"] = plan.status
     response["token_usage"] = workflow_usage(response)
     record_execution(response)
+    update_workflow_trace(
+        trace_context=plan.trace_context,
+        output={
+            "status": response.get("status"),
+            "workflow_session_id": plan.session_id,
+            "approval": {
+                "approval_id": plan.approval_id,
+                "status": plan.status,
+                "approved_by": plan.approved_by,
+                "approval_reason": plan.approval_reason,
+            },
+            "codefix": response.get("codefix") if plan.agent_type == "code_fix" else None,
+            "db_fix": response.get("db_fix") if plan.agent_type == "db_fix" else None,
+        },
+        metadata={
+            "approval_id": plan.approval_id,
+            "approval_status": plan.status,
+            "agent_type": plan.agent_type,
+        },
+    )
 
 @health_router.get("/health")
 @health_router.head("/health")

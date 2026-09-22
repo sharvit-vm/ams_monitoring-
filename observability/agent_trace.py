@@ -317,6 +317,49 @@ def current_trace_context() -> dict[str, str]:
     return dict(_TRACE_CONTEXT.get() or {})
 
 
+def update_workflow_trace(
+    *,
+    trace_context: dict[str, str] | None,
+    output: Any,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Append a continuation update to an existing workflow trace.
+
+    Approval-resumed work runs in a later worker job, after the original root
+    observation has closed.  Starting a short observation with the persisted
+    trace context keeps the continuation in the same trace, while
+    ``set_current_trace_io`` updates the root trace output with the latest
+    workflow state.  Observability remains best-effort and cannot affect the
+    workflow.
+    """
+    client = _get_langfuse_client()
+    trace_context = trace_context or {}
+    trace_id = trace_context.get("trace_id")
+    if not client or not trace_id or not hasattr(client, "start_as_current_observation"):
+        return
+
+    merged_metadata = {
+        "workflow_continuation": True,
+        **(metadata or {}),
+    }
+    try:
+        with client.start_as_current_observation(
+            trace_context={"trace_id": trace_id},
+            as_type="span",
+            name="workflow.approval_update",
+            input={"trace_id": trace_id},
+            output=output,
+            metadata=merged_metadata,
+        ):
+            if hasattr(client, "set_current_trace_io"):
+                client.set_current_trace_io(output=output)
+    except Exception as exc:  # pragma: no cover - optional observability
+        print(f"[observability] Workflow trace update skipped; error={exc}")
+    finally:
+        if _enabled(os.getenv("LANGFUSE_FLUSH_ON_SPAN"), default=True):
+            langfuse_flush()
+
+
 @contextmanager
 def workflow_step_span(
     *,
