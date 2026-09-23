@@ -1,4 +1,4 @@
-# AMS Monitoring Incident Resolution Platform
+# AMS Incident Resolution Platform
 
 An incident intake, categorisation, RCA, and governed remediation service for
 Jira, ServiceNow, and GitHub incidents.
@@ -123,6 +123,30 @@ review and resubmit when appropriate.
 | Reports | storage/ and data/ | RCA report persistence |
 | Frontend | frontend/ | Workflow dashboard |
 
+## 3.1 Technology Stack
+
+| Technology | How it is used |
+|---|---|
+| FastAPI | Webhook, job, approval, health, and dashboard APIs |
+| Uvicorn | ASGI server for local and hosted execution |
+| Pydantic | Typed contracts such as SourceEvent, ErrorEvent, RCA, and approval plans |
+| LangGraph | Explicit workflow graph, conditional routing, and stage transitions |
+| Groq/OpenAI-compatible clients | Categorisation, L2 RCA, L3 analysis, summaries, and embeddings |
+| Tree-sitter | Concrete syntax tree parsing for supported source languages |
+| Neo4j | Repository structure, calls, imports, ownership, and graph expansion |
+| BM25 | Local lexical retrieval for exact incident/source terms |
+| Chroma/Pinecone | Optional semantic vector retrieval |
+| SQLite | Single-host durable jobs, snapshots, and approval state |
+| Server-sent events | Live dashboard execution updates |
+| Langfuse | Optional LLM traces, sessions, token usage, and cost |
+| Git | Repository checkout, branches, commits, and pull requests |
+| ThreadPoolExecutor | Bounded parallel LLM summaries, hierarchy summaries, and retrieval |
+
+The stack is intentionally split by responsibility: FastAPI receives the
+event, Pydantic validates the contract, LangGraph orchestrates, Tree-sitter
+and Neo4j understand source structure, RAG retrieves candidates, agents reason
+over bounded evidence, and governance controls remediation.
+
 ## 4. Intake and Routing
 
 Supported endpoints:
@@ -163,6 +187,15 @@ being mistaken for a confirmed code location.
 Guardrails inspect the source, headers, payload, and normalized event. A
 blocked event stops for manual intervention. Credentials and authentication
 headers are not copied into workflow state.
+
+The current deterministic checks are:
+
+- supported source validation;
+- known secret/token pattern detection for common key prefixes;
+- dangerous-action term detection such as drop table or disable auth;
+- repository-context check for code issues;
+- application/configuration-item check for operational issues.
+
 
 Categorisation decides validity, duplicate status, category, technology, risk,
 criticality, support level, human-review requirement, and next action:
@@ -249,7 +282,42 @@ JavaScript, TypeScript, Go, and Java.
 LLM summaries provide bounded context. They are not treated as stronger
 evidence than the actual source file.
 
-### 5.4 Ingestion performance and parallelism
+### 5.4 Tree-sitter parsing
+
+Tree-sitter is the source-code parsing technology used by the parser layer. It
+does not ask an LLM to guess where a class or function is. It parses source
+bytes into a concrete syntax tree, which lets the application extract
+structure and source ranges deterministically.
+
+The parser flow is:
+
+    source file
+        -> language detection by extension
+        -> Tree-sitter parser
+        -> syntax tree
+        -> classes, functions, imports, symbols, and line ranges
+        -> FileInfo used by Neo4j and RAG
+
+The common parser contract is defined by parsers/base_parser.py. Language
+implementations currently exist for:
+
+    Python, JavaScript, TypeScript, Go, Java
+
+The Java parser additionally extracts packages, classes, methods, parameters,
+method calls, call sites, imported symbols, and exported symbols. This
+structured information is used to resolve graph relationships and to give the
+L3 agent precise function and line context.
+
+The language detector recognizes more file types, including Markdown, YAML,
+JSON, SQL, HTML, CSS, and several other languages. Those files can still be
+discovered, summarized, stored as FileNodes, or chunked for RAG, but only the
+parseable languages receive Tree-sitter AST extraction.
+
+If a supported source file has syntax errors, the parser records a parse error
+instead of inventing unreliable function or class relationships. This is
+important for RCA accuracy: uncertain structure is visible as a limitation.
+
+### 5.5 Ingestion performance and parallelism
 
 The ingestion stages have different dependency rules:
 
@@ -296,7 +364,7 @@ This is a correctness boundary, not an accidental performance limitation.
 Parallelizing dependent hierarchy levels or graph writes before their nodes
 exist could create incomplete or incorrectly linked evidence.
 
-### 5.5 RAG chunking
+### 5.6 RAG chunking
 
 RAG chunks preserve file path, start/end line, language, content type, symbol,
 imports, called symbols, stable chunk ID, content hash, and same-file
@@ -315,14 +383,14 @@ MAX_CHUNK_TOKENS=800
 MAX_CHUNK_TOKENS applies to embedding/vector ingestion. Retrieval results
 should remain traceable to a real file and line range.
 
-### 5.6 BM25 lexical retrieval
+### 5.7 BM25 lexical retrieval
 
 The lexical index uses a BM25-style implementation. It is strong for exact
 exception names, method/class names, file names, distinctive log messages,
 and exact ticket wording. BM25 uses term frequency, inverse document
 frequency, document length, and exact symbol/file matching.
 
-### 5.7 Semantic retrieval
+### 5.8 Semantic retrieval
 
 When enabled, chunks are embedded and stored in the configured vector
 provider:
@@ -343,7 +411,7 @@ AUTO_VECTOR_INGEST_ON_WEBHOOK=false
 Lexical retrieval, traceback evidence, bounded source reads, and Neo4j can
 still support L3 when semantic vectors are disabled.
 
-### 5.8 Reciprocal Rank Fusion
+### 5.9 Reciprocal Rank Fusion
 
 When BM25 and semantic retrieval are both enabled, ranked lists are combined:
 
@@ -363,7 +431,7 @@ RAG_CHUNK_MAX_CHARS=6000
 RAG_VECTOR_UPSERT_BATCH=50
 ~~~
 
-### 5.9 Neo4j graph expansion
+### 5.10 Neo4j graph expansion
 
 Neo4j stores files, functions, classes, folders, hierarchy levels, imports,
 calls, callers, callees, ownership, and summaries.
@@ -381,7 +449,7 @@ The intended relationship is:
 Neo4j enriches and verifies the primary candidate. It should not replace the
 traceback or make an unrelated connected file the primary bug location.
 
-### 5.10 Evidence-backed RCA
+### 5.11 Evidence-backed RCA
 
 The L3 agent gathers bounded context from the traceback, RAG, Neo4j, summaries,
 folders, functions, callers, callees, and source ranges. It does not need the
@@ -406,7 +474,7 @@ Unresolved causal or semantic validation can cap the score for safety. A
 score of 0.49 means the system refused to treat the causal explanation as
 verified. Confidence and remediation readiness are separate gates.
 
-### 5.11 Code-fix and approval
+### 5.12 Code-fix and approval
 
 After the report is saved, the code-fix agent loads its skill, reads the RCA
 evidence and target source, proposes the smallest evidence-backed patch, uses
@@ -438,7 +506,10 @@ environment problems.
             +--> human approval, when required
             |
             v
-    Final response and notification
+    Final response
+            |
+            v
+    Domain-specific notification when configured
 
 The L2 request contains ticket ID, classification, support level, technology,
 team, application/configuration item, title, description, priority, and
@@ -462,7 +533,10 @@ Human review is used when guardrails block the event, categorisation is
 uncertain, the event is invalid/incomplete, or policy requires review.
 
 The dashboard exposes workflow state and pending approval plans. Notification
-steps use the source platform selected for the incident.
+channels are represented in the dashboard by source platform. The DB fix
+agent currently includes a ServiceNow notification step; generic Jira,
+ServiceNow, and GitHub response delivery is not yet a single common
+notification executor.
 
 ## 8. Sessions, Dashboard, and Langfuse
 
@@ -737,8 +811,12 @@ Implemented:
 - RRF retrieval fusion;
 - structured L3 RCA and confidence;
 - embedded L2 RCA;
-- registered domain fix-agent routing;
+- DB fix agent with approval, execution, verification, and telemetry;
+- registered domain fix-agent routing for future operational agents;
 - code-fix approval workflow;
 - dashboard execution state;
 - optional Langfuse tracing.
 
+---
+
+Maintained by Sharvit Nilesh Kashikar
